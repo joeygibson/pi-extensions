@@ -5,7 +5,7 @@
 | Extension | Description |
 |-----------|-------------|
 | **[security-guard](extensions/security-guard.ts)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. |
-| **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and Ghostty tab info. |
+| **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app). |
 
 ## Install All Extensions
 
@@ -75,8 +75,10 @@ Without a config file, sensible defaults are used. Rules are reloaded on
 ### macos-notify
 
 Sends a native macOS notification (with pi's icon) when the agent has been
-working for 3+ seconds and finishes. Includes Ghostty tab name and number if
-available.
+working for 3+ seconds and finishes. Includes tab name and number if
+available. Supports **Ghostty**, **iTerm2**, and **Terminal.app** — the
+terminal is detected automatically via `TERM_PROGRAM`. For unknown terminals,
+all three are tried in sequence.
 
 This extension requires a small native macOS app bundle (`PiNotify.app`) to
 deliver notifications. Using an `.app` bundle — rather than bare `osascript` —

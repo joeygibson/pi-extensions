@@ -1,0 +1,18 @@
+{
+  "name": "@joeygibson/pi-extensions",
+  "version": "1.0.0",
+  "description": "Pi coding agent extensions: security-guard and macos-notify",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "author": "Joey Gibson <joey@joeygibson.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joeygibson/pi-extensions.git"
+  },
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  }
+}

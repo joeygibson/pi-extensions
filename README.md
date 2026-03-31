@@ -6,6 +6,7 @@
 |-----------|-------------|
 | **[security-guard](extensions/security-guard.ts)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. |
 | **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app). |
+| **[clip](extensions/clip.ts)** | Copies the last assistant message (as markdown) to the clipboard via `/clip`. Works on macOS, Linux, and Windows. No LLM round-trip needed. |
 
 ## Install All Extensions
 
@@ -42,6 +43,19 @@ Or just the notification extension:
 }
 ```
 
+Or just the clipboard extension:
+
+```json
+{
+  "packages": [
+    {
+      "source": "git:github.com/joeygibson/pi-extensions",
+      "extensions": ["extensions/clip.ts"]
+    }
+  ]
+}
+```
+
 ## Extension Details
 
 ### security-guard
@@ -71,6 +85,17 @@ dd if= = block
 
 Without a config file, sensible defaults are used. Rules are reloaded on
 `/reload`.
+
+### clip
+
+Registers a `/clip` command that copies the last assistant message (as
+markdown) to the clipboard. Runs entirely client-side — no LLM round-trip.
+Works on macOS, Linux, and Windows:
+
+- **macOS** — uses `pbcopy` (built-in)
+- **Linux (X11)** — uses `xclip` (install with `apt install xclip` or equivalent)
+- **Linux (Wayland)** — uses `wl-copy` (install with `apt install wl-clipboard` or equivalent)
+- **Windows** — uses `clip.exe` (built-in)
 
 ### macos-notify
 

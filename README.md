@@ -1,6 +1,6 @@
 # pi-extensions
 
-[Pi](https://github.com/badlogic/pi) coding agent extensions.
+[Pi](https://pi.dev) coding agent extensions.
 
 | Extension | Description |
 |-----------|-------------|

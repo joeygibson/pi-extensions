@@ -1,6 +1,6 @@
 {
   "name": "@joeygibson/pi-extensions",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Pi coding agent extensions: security-guard, macos-notify, and clip",
   "keywords": ["pi-package"],
   "license": "MIT",

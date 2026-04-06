@@ -16,7 +16,7 @@ import * as os from "node:os";
 
 const DEBUG = false; // Set to true for verbose logging
 
-type Action = "prompt" | "block";
+type Action = "prompt" | "block" | "allow";
 
 interface SecurityRule {
   pattern: string;
@@ -96,7 +96,7 @@ function parseConfigFile(filePath: string): SecurityRules | null {
           const pattern = line.substring(0, lastEqualIndex).trim();
           const action = line.substring(lastEqualIndex + 1).trim() as Action;
 
-          if (action !== "prompt" && action !== "block") {
+          if (action !== "prompt" && action !== "block" && action !== "allow") {
             console.warn(
               `[security-guard] Invalid action "${action}" on line ${i + 1}, skipping`
             );
@@ -166,12 +166,20 @@ function findMatchingRule(
   text: string,
   rules: SecurityRule[]
 ): SecurityRule | null {
+  // Collect all matching rules and return the most specific one
+  // (longest pattern). This allows narrow "allow" exceptions to
+  // override broader "block" rules, e.g.:
+  //   > /dev/ = block
+  //   > /dev/null = allow
+  let best: SecurityRule | null = null;
   for (const rule of rules) {
     if (matchesPattern(text, rule)) {
-      return rule;
+      if (best === null || rule.pattern.length > best.pattern.length) {
+        best = rule;
+      }
     }
   }
-  return null;
+  return best;
 }
 
 function ensureExampleConfig() {
@@ -189,6 +197,7 @@ function ensureExampleConfig() {
 # Actions:
 #   prompt - Ask for user confirmation before allowing the operation
 #   block  - Immediately block the operation without prompting
+#   allow  - Explicitly allow (use to create exceptions to broader rules)
 #
 # Patterns use simple substring matching. For paths starting with ~/, both the
 # literal pattern and the expanded home directory path are checked.
@@ -202,6 +211,7 @@ sudo = prompt
 dd if= = block
 mkfs = block
 > /dev/ = block
+> /dev/null = allow
 
 [writes]
 # File paths to protect from write/edit operations
@@ -269,6 +279,10 @@ export default function (pi: ExtensionAPI) {
           );
         }
 
+        if (matchedRule.action === "allow") {
+          return undefined;
+        }
+
         if (matchedRule.action === "block") {
           if (ctx.hasUI) {
             ctx.ui.notify(
@@ -316,6 +330,10 @@ export default function (pi: ExtensionAPI) {
           );
         }
 
+        if (matchedRule.action === "allow") {
+          return undefined;
+        }
+
         if (matchedRule.action === "block") {
           if (ctx.hasUI) {
             ctx.ui.notify(
@@ -361,6 +379,10 @@ export default function (pi: ExtensionAPI) {
           console.log(
             `[security-guard] Matched read path: "${filePath}" -> ${matchedRule.action}`
           );
+        }
+
+        if (matchedRule.action === "allow") {
+          return undefined;
         }
 
         if (matchedRule.action === "block") {

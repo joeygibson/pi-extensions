@@ -62,7 +62,9 @@ Or just the clipboard extension:
 
 Intercepts `tool_call` events and checks bash commands, file writes, and file
 reads against a set of rules. Each rule specifies a substring pattern and an
-action (`prompt` or `block`).
+action (`prompt`, `block`, or `allow`). When multiple rules match, the most
+specific (longest pattern) wins — so you can create narrow `allow` exceptions
+to broader `block` rules.
 
 **Configuration:** On first load, an example config is written to
 `~/.pi/agent/security-guard.toml.example`. Copy it to
@@ -73,6 +75,8 @@ action (`prompt` or `block`).
 rm -rf = prompt
 sudo = prompt
 dd if= = block
+> /dev/ = block
+> /dev/null = allow
 
 [writes]
 .env = block

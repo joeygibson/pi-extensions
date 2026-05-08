@@ -16,7 +16,7 @@
  * from source (requires Xcode Command Line Tools). See macos-notify-app/.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, basename, dirname } from "node:path";

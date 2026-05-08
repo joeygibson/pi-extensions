@@ -8,6 +8,12 @@
 | **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app). |
 | **[clip](extensions/clip.ts)** | Copies the last assistant message (as markdown) to the clipboard via `/clip`. Works on macOS, Linux, and Windows. No LLM round-trip needed. |
 
+## ⚠️ Package Rename (v1.2.0+)
+
+As of pi v0.74.0, the package has been renamed from `@mariozechner/pi-coding-agent`
+to `@earendil-works/pi-coding-agent`. If you're on an older version of these
+extensions, update to v1.2.0+ to stay compatible.
+
 ## Install All Extensions
 
 ```bash

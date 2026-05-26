@@ -7,6 +7,7 @@
 | **[security-guard](extensions/security-guard.ts)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. |
 | **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app). |
 | **[clip](extensions/clip.ts)** | Copies the last assistant message (as markdown) to the clipboard via `/clip`. Works on macOS, Linux, and Windows. No LLM round-trip needed. |
+| **[save](extensions/save.ts)** | Saves the last assistant message as markdown to a file via `/save [filepath]`. Auto-generates a filename from context if none is given. |
 
 ## ⚠️ Package Rename (v1.2.0+)
 
@@ -62,6 +63,19 @@ Or just the clipboard extension:
 }
 ```
 
+Or just the save extension:
+
+```json
+{
+  "packages": [
+    {
+      "source": "git:github.com/joeygibson/pi-extensions",
+      "extensions": ["extensions/save.ts"]
+    }
+  ]
+}
+```
+
 ## Extension Details
 
 ### security-guard
@@ -106,6 +120,20 @@ Works on macOS, Linux, and Windows:
 - **Linux (X11)** — uses `xclip` (install with `apt install xclip` or equivalent)
 - **Linux (Wayland)** — uses `wl-copy` (install with `apt install wl-clipboard` or equivalent)
 - **Windows** — uses `clip.exe` (built-in)
+
+### save
+
+Registers a `/save` command that writes the last assistant message as markdown
+to a file. Accepts an optional filepath argument:
+
+- **`/save`** — auto-generates a filename from the content (e.g.
+  `your-content-slug-202605261507.md`)
+- **`/save notes/design`** — writes to `notes/design.md` (`.md` added if no
+  extension is present)
+- **`/save output.txt`** — writes to `output.txt` as-is
+
+Runs entirely client-side — no LLM round-trip. Creates parent directories
+automatically if they don't exist.
 
 ### macos-notify
 

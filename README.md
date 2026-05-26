@@ -6,7 +6,7 @@
 |-----------|-------------|
 | **[security-guard](extensions/security-guard.ts)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. |
 | **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app). |
-| **[clip](extensions/clip.ts)** | Copies the last assistant message (as markdown) to the clipboard via `/clip`. Works on macOS, Linux, and Windows. No LLM round-trip needed. |
+| **[clip](extensions/clip.ts)** | ⚠️ **Deprecated** — use the built-in `/copy` command. Copies the last assistant message to the clipboard via `/clip`. |
 | **[save](extensions/save.ts)** | Saves the last assistant message as markdown to a file via `/save [filepath]`. Auto-generates a filename from context if none is given. |
 
 ## ⚠️ Package Rename (v1.2.0+)
@@ -110,7 +110,11 @@ dd if= = block
 Without a config file, sensible defaults are used. Rules are reloaded on
 `/reload`.
 
-### clip
+### clip (deprecated)
+
+> ⚠️ **Deprecated:** Pi now has a built-in `/copy` command that does the same
+> thing. This extension is kept for backward compatibility but will be removed
+> in a future release.
 
 Registers a `/clip` command that copies the last assistant message (as
 markdown) to the clipboard. Runs entirely client-side — no LLM round-trip.

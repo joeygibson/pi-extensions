@@ -1,8 +1,10 @@
 /**
- * Clipboard Extension
+ * Clipboard Extension (DEPRECATED)
  *
  * Registers a `/clip` command that copies the last assistant message
  * (as markdown) to the macOS clipboard. No LLM round-trip needed.
+ *
+ * @deprecated Use the built-in `/copy` command instead.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -39,8 +41,9 @@ function copyToClipboard(text: string): Promise<void> {
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("clip", {
-    description: "Copy the last assistant message as markdown to clipboard",
+    description: "[DEPRECATED: use /copy] Copy the last assistant message as markdown to clipboard",
     handler: async (_args, ctx) => {
+      ctx.ui.notify("/clip is deprecated. Use the built-in /copy instead.", "warning");
       const entries = ctx.sessionManager.getBranch();
 
       // Walk backwards to find the last assistant message

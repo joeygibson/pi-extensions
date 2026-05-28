@@ -4,10 +4,11 @@
 
 | Extension | Description |
 |-----------|-------------|
-| **[security-guard](extensions/security-guard.ts)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. |
-| **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app). |
 | **[clip](extensions/clip.ts)** | ⚠️ **Deprecated** — use the built-in `/copy` command. Copies the last assistant message to the clipboard via `/clip`. |
+| **[github-prs](extensions/github-prs.ts)** | Shows your open GitHub PRs with reviewer approval status via `/prs`. |
+| **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app). |
 | **[save](extensions/save.ts)** | Saves the last assistant message as markdown to a file via `/save [filepath]`. Auto-generates a filename from context if none is given. |
+| **[security-guard](extensions/security-guard.ts)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. |
 
 ## ⚠️ Package Rename (v1.2.0+)
 
@@ -63,6 +64,19 @@ Or just the clipboard extension:
 }
 ```
 
+Or just the GitHub PRs extension:
+
+```json
+{
+  "packages": [
+    {
+      "source": "git:github.com/joeygibson/pi-extensions",
+      "extensions": ["extensions/github-prs.ts"]
+    }
+  ]
+}
+```
+
 Or just the save extension:
 
 ```json
@@ -77,6 +91,28 @@ Or just the save extension:
 ```
 
 ## Extension Details
+
+### github-prs
+
+Registers a `/prs` command that fetches your open pull requests from GitHub and
+displays them in a box-drawn table with ANSI colors. Each PR shows its number
+(as a clickable hyperlink in supported terminals), title, and the approval
+status of every reviewer.
+
+Reviewer statuses:
+- **✔** (green) — Approved
+- **✘** (red) — Changes requested
+- **●** (yellow) — Commented
+- **○** (gray) — Dismissed
+- **◌** (dim) — Pending (requested but hasn't reviewed yet)
+
+The extension uses `gh pr list --author @me` under the hood, so it
+automatically shows PRs for whoever is authenticated with the GitHub CLI. No
+repo-specific configuration is needed.
+
+**Prerequisites:**
+- [GitHub CLI (`gh`)](https://cli.github.com/) installed and on your `PATH`
+- Authenticated via `gh auth login`
 
 ### security-guard
 

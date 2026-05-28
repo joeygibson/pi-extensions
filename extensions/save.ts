@@ -8,6 +8,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, resolve, extname } from "node:path";
 
 /**
@@ -96,7 +97,10 @@ export default function (pi: ExtensionAPI) {
         filepath = generateFilename(markdown);
       }
 
-      // Resolve relative to cwd
+      // Expand ~ to home directory, then resolve relative to cwd
+      if (filepath.startsWith("~/") || filepath === "~") {
+        filepath = filepath.replace("~", homedir());
+      }
       const absolutePath = resolve(ctx.cwd, filepath);
 
       // Ensure parent directory exists

@@ -96,16 +96,21 @@ export default function githubPrsExtension(pi: ExtensionAPI) {
 
 
       try {
-        const result = await pi.exec("gh", [
-          "pr",
-          "list",
-          "--author",
-          "@me",
-          "--state",
-          "open",
-          "--json",
-          "number,title,url,headRefName,reviews,reviewRequests",
+        const [prResult, userResult] = await Promise.all([
+          pi.exec("gh", [
+            "pr",
+            "list",
+            "--author",
+            "@me",
+            "--state",
+            "open",
+            "--json",
+            "number,title,url,headRefName,reviews,reviewRequests",
+          ]),
+          pi.exec("gh", ["api", "user", "--jq", ".login"]),
         ]);
+
+        const result = prResult;
 
         ctx.ui.setStatus("prs", "");
 
@@ -118,6 +123,7 @@ export default function githubPrsExtension(pi: ExtensionAPI) {
         }
 
         const prs: PR[] = JSON.parse(result.stdout);
+        const currentUser = userResult.code === 0 ? userResult.stdout.trim() : "";
         prs.sort((a, b) => a.number - b.number);
 
         if (prs.length === 0) {
@@ -130,22 +136,24 @@ export default function githubPrsExtension(pi: ExtensionAPI) {
 
         for (const pr of prs) {
           const latestReviews = getLatestReviews(pr.reviews);
+          latestReviews.delete(currentUser);
           const pendingReviewers = pr.reviewRequests
             .map((r) => r.login || r.name || "unknown")
-            .filter((login) => !latestReviews.has(login));
+            .filter((login) => !latestReviews.has(login) && login !== currentUser);
 
-          const reviewerParts: string[] = [];
-          for (const [login, state] of [...latestReviews.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-            reviewerParts.push(`${getReviewStatusIndicator(state)} ${login}`);
+          const reviewerParts: Array<{ login: string; display: string }> = [];
+          for (const [login, state] of latestReviews) {
+            reviewerParts.push({ login, display: `${getReviewStatusIndicator(state)} ${login}` });
           }
-          for (const login of pendingReviewers.sort((a, b) => a.localeCompare(b))) {
-            reviewerParts.push(`${colorize("◌", ansi.dim)} ${colorize(login, ansi.dim)}`);
+          for (const login of pendingReviewers) {
+            reviewerParts.push({ login, display: `${colorize("◌", ansi.dim)} ${colorize(login, ansi.dim)}` });
           }
+          reviewerParts.sort((a, b) => a.login.localeCompare(b.login));
 
           rows.push({
             pr: link(pr.url, colorize(`#${pr.number}`, ansi.cyan)),
             title: colorize(pr.title, ansi.bold, ansi.white),
-            reviewers: reviewerParts.length > 0 ? reviewerParts.join("  ") : colorize("—", ansi.dim),
+            reviewers: reviewerParts.length > 0 ? reviewerParts.map((r) => r.display).join("  ") : colorize("—", ansi.dim),
           });
         }
 

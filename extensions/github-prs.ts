@@ -2,7 +2,8 @@
  * GitHub PRs Extension
  *
  * Provides a /prs command that fetches your open pull requests from GitHub
- * and displays the title and approval status of each reviewer.
+ * and displays the title, the approval status of each reviewer, and an
+ * overall approval indicator (✅ when at least one reviewer has approved).
  *
  * Usage: /prs
  */
@@ -51,6 +52,9 @@ function colorize(text: string, ...codes: string[]): string {
   return `${codes.join("")}${text}${ansi.reset}`;
 }
 
+// White check mark shown when a PR has at least one approval
+const APPROVAL_EMOJI = "✅";
+
 function getReviewStatusIndicator(state: string): string {
   switch (state) {
     case "APPROVED":
@@ -66,12 +70,19 @@ function getReviewStatusIndicator(state: string): string {
   }
 }
 
+// Code points that render as two terminal cells (emoji presentation)
+const WIDE_CODE_POINTS = new Set<number>([0x2705]); // ✅ white check mark
+
 // Calculate display width, stripping ANSI escape sequences and OSC 8 hyperlinks
 function displayWidth(str: string): number {
   const stripped = str
     .replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, "") // strip OSC 8 hyperlinks
     .replace(/\x1b\[[0-9;]*m/g, ""); // strip ANSI colors
-  return stripped.length;
+  let width = 0;
+  for (const ch of stripped) {
+    width += WIDE_CODE_POINTS.has(ch.codePointAt(0)!) ? 2 : 1;
+  }
+  return width;
 }
 
 function padDisplay(str: string, targetWidth: number): string {
@@ -132,7 +143,7 @@ export default function githubPrsExtension(pi: ExtensionAPI) {
         }
 
         // Build row data
-        const rows: Array<{ pr: string; title: string; reviewers: string }> = [];
+        const rows: Array<{ pr: string; title: string; reviewers: string; status: string }> = [];
 
         for (const pr of prs) {
           const latestReviews = getLatestReviews(pr.reviews);
@@ -150,10 +161,13 @@ export default function githubPrsExtension(pi: ExtensionAPI) {
           }
           reviewerParts.sort((a, b) => a.login.localeCompare(b.login));
 
+          const hasApproval = [...latestReviews.values()].some((state) => state === "APPROVED");
+
           rows.push({
             pr: link(pr.url, colorize(`#${pr.number}`, ansi.cyan)),
             title: colorize(pr.title, ansi.bold, ansi.white),
             reviewers: reviewerParts.length > 0 ? reviewerParts.map((r) => r.display).join("  ") : colorize("—", ansi.dim),
+            status: hasApproval ? APPROVAL_EMOJI : "",
           });
         }
 
@@ -163,23 +177,24 @@ export default function githubPrsExtension(pi: ExtensionAPI) {
           ...rows.map((r) => displayWidth(r.title)),
           ...rows.map((r) => displayWidth(r.reviewers))
         );
+        const colStatus = Math.max(displayWidth(APPROVAL_EMOJI), ...rows.map((r) => displayWidth(r.status)));
 
         const h = (n: number) => colorize("─".repeat(n), ansi.gray);
         const v = colorize("│", ansi.gray);
         const lines: string[] = [""];
 
-        lines.push(`${colorize("┌─", ansi.gray)}${h(colPr)}${colorize("─┬─", ansi.gray)}${h(colContent)}${colorize("─┐", ansi.gray)}`);
+        lines.push(`${colorize("┌─", ansi.gray)}${h(colPr)}${colorize("─┬─", ansi.gray)}${h(colContent)}${colorize("─┬─", ansi.gray)}${h(colStatus)}${colorize("─┐", ansi.gray)}`);
 
         for (let i = 0; i < rows.length; i++) {
           const r = rows[i];
-          lines.push(`${v} ${padDisplay(r.pr, colPr)} ${v} ${padDisplay(r.title, colContent)} ${v}`);
-          lines.push(`${v} ${padDisplay("", colPr)} ${v} ${padDisplay(r.reviewers, colContent)} ${v}`);
+          lines.push(`${v} ${padDisplay(r.pr, colPr)} ${v} ${padDisplay(r.title, colContent)} ${v} ${padDisplay(r.status, colStatus)} ${v}`);
+          lines.push(`${v} ${padDisplay("", colPr)} ${v} ${padDisplay(r.reviewers, colContent)} ${v} ${padDisplay("", colStatus)} ${v}`);
           if (i < rows.length - 1) {
-            lines.push(`${colorize("├─", ansi.gray)}${h(colPr)}${colorize("─┼─", ansi.gray)}${h(colContent)}${colorize("─┤", ansi.gray)}`);
+            lines.push(`${colorize("├─", ansi.gray)}${h(colPr)}${colorize("─┼─", ansi.gray)}${h(colContent)}${colorize("─┼─", ansi.gray)}${h(colStatus)}${colorize("─┤", ansi.gray)}`);
           }
         }
 
-        lines.push(`${colorize("└─", ansi.gray)}${h(colPr)}${colorize("─┴─", ansi.gray)}${h(colContent)}${colorize("─┘", ansi.gray)}`);
+        lines.push(`${colorize("└─", ansi.gray)}${h(colPr)}${colorize("─┴─", ansi.gray)}${h(colContent)}${colorize("─┴─", ansi.gray)}${h(colStatus)}${colorize("─┘", ansi.gray)}`);
         lines.push("");
 
         ctx.ui.notify(lines.join("\n"), "info");

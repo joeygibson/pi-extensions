@@ -162,6 +162,64 @@ function matchesPattern(text: string, rule: SecurityRule): boolean {
   return false;
 }
 
+/**
+ * Highlights the matched pattern so it's easy to spot (e.g. a nested "rm -rf")
+ * in a long command. Checks both the literal pattern and, for ~ paths, the
+ * expanded home path.
+ *
+ * If a `colorize` function is provided (e.g. ctx.ui.theme.fg bound to a color),
+ * the *entire command segment* containing the match is colored — not just the
+ * trigger pattern — so the command and its arguments stand out. Segments are
+ * split on shell separators (&&, ||, |, ;, newline) so neighboring commands
+ * stay uncolored. The whole colored segment is wrapped in »« markers so the
+ * command and its arguments are clearly delimited even without color. Each
+ * colored span is inline (no newlines), so per-line SGR resets in the TUI
+ * won't bleed across lines.
+ */
+function highlightMatch(
+  text: string,
+  rule: SecurityRule,
+  colorize?: (s: string) => string
+): string {
+  const needles = [rule.pattern];
+  if (rule.pattern.startsWith("~")) {
+    needles.push(expandTilde(rule.pattern));
+  }
+
+  // Highlight the longest matching needle present in the text.
+  const needle = needles
+    .filter((n) => n.length > 0 && text.includes(n))
+    .sort((a, b) => b.length - a.length)[0];
+
+  if (!needle) {
+    return text;
+  }
+
+  const mark = (s: string) => s.split(needle).join(`»${needle}«`);
+
+  // Without color, just mark the trigger pattern.
+  if (!colorize) {
+    return mark(text);
+  }
+
+  // With color, split into command segments (keeping separators) and color
+  // any whole segment that contains the trigger, wrapping the command and its
+  // arguments in »« markers (placed inside any surrounding whitespace).
+  const separators = new Set(["&&", "||", "|", ";", "\n"]);
+  const parts = text.split(/(&&|\|\||;|\||\n)/);
+
+  return parts
+    .map((part) => {
+      if (separators.has(part) || !part.includes(needle)) {
+        return part;
+      }
+      const m = part.match(/^(\s*)([\s\S]*?)(\s*)$/);
+      const [, lead, core, trail] = m ?? ["", "", part, ""];
+      return `${lead}${colorize(`»${core}«`)}${trail}`;
+    })
+    .join("");
+}
+
 function findMatchingRule(
   text: string,
   rules: SecurityRule[]
@@ -306,7 +364,7 @@ export default function (pi: ExtensionAPI) {
           }
 
           const choice = await ctx.ui.select(
-            `⚠️ Security check: Command contains "${matchedRule.pattern}"\n\nCommand: ${command}\n\nAllow?`,
+            `⚠️ Security check: Command contains "${matchedRule.pattern}"\n\nCommand: ${highlightMatch(command, matchedRule, (s) => ctx.ui.theme.fg("error", s))}\n\nAllow?`,
             ["Allow", "Deny"]
           );
 
@@ -357,7 +415,7 @@ export default function (pi: ExtensionAPI) {
           }
 
           const choice = await ctx.ui.select(
-            `⚠️ Security check: Writing to file matching "${matchedRule.pattern}"\n\nPath: ${filePath}\n\nAllow?`,
+            `⚠️ Security check: Writing to file matching "${matchedRule.pattern}"\n\nPath: ${highlightMatch(filePath, matchedRule, (s) => ctx.ui.theme.fg("error", s))}\n\nAllow?`,
             ["Allow", "Deny"]
           );
 
@@ -408,7 +466,7 @@ export default function (pi: ExtensionAPI) {
           }
 
           const choice = await ctx.ui.select(
-            `⚠️ Security check: Reading file matching "${matchedRule.pattern}"\n\nPath: ${filePath}\n\nAllow?`,
+            `⚠️ Security check: Reading file matching "${matchedRule.pattern}"\n\nPath: ${highlightMatch(filePath, matchedRule, (s) => ctx.ui.theme.fg("error", s))}\n\nAllow?`,
             ["Allow", "Deny"]
           );
 

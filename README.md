@@ -146,6 +146,12 @@ dd if= = block
 Without a config file, sensible defaults are used. Rules are reloaded on
 `/reload`.
 
+**Prompt highlighting:** When a command or path triggers a `prompt`, the
+offending command segment is highlighted in red and wrapped in `»…«` markers
+— from the trigger through its arguments — so dangerous operations like a
+nested `rm -rf` are easy to spot. Highlighting stops at shell separators
+(`&&`, `||`, `|`, `;`, newline), so neighboring commands stay uncolored.
+
 ### clip (deprecated)
 
 > ⚠️ **Deprecated:** Pi now has a built-in `/copy` command that does the same

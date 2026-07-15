@@ -90,6 +90,55 @@ function padDisplay(str: string, targetWidth: number): string {
   return str + " ".repeat(Math.max(0, targetWidth - w));
 }
 
+// ANSI/OSC8-aware truncation. Counts only visible cells, passes escape
+// sequences through untouched, and re-appends a reset if any color was open.
+function truncateDisplay(str: string, maxWidth: number, ellipsis = "…"): string {
+  if (displayWidth(str) <= maxWidth) return str;
+  const target = Math.max(0, maxWidth - displayWidth(ellipsis));
+  let width = 0;
+  let out = "";
+  let i = 0;
+  let hadColor = false;
+  while (i < str.length) {
+    const rest = str.slice(i);
+    const ansiMatch = rest.match(/^\x1b\[[0-9;]*m/);
+    if (ansiMatch) {
+      out += ansiMatch[0];
+      hadColor = true;
+      i += ansiMatch[0].length;
+      continue;
+    }
+    const oscMatch = rest.match(/^\x1b\]8;;[^\x1b]*\x1b\\/);
+    if (oscMatch) {
+      out += oscMatch[0];
+      i += oscMatch[0].length;
+      continue;
+    }
+    const cp = str.codePointAt(i)!;
+    const ch = String.fromCodePoint(cp);
+    const w = WIDE_CODE_POINTS.has(cp) ? 2 : 1;
+    if (width + w > target) break;
+    out += ch;
+    width += w;
+    i += ch.length;
+  }
+  out += ellipsis;
+  if (hadColor) out += ansi.reset;
+  return out;
+}
+
+// Current pane/terminal width. Under a multiplexer (e.g. herdr) process.stdout
+// is the pane's PTY, so this reflects the pane width, not the full terminal.
+// This matches the width pi's TUI itself uses (ui.terminal.columns).
+function terminalWidth(): number {
+  return process.stdout.columns || Number(process.env.COLUMNS) || 80;
+}
+
+// notify() renders through a Text component with paddingX = 1, so it word-wraps
+// content at (paneWidth - 2). Reserve that padding plus a 1-column safety margin
+// so full-width table rows never wrap (which would shatter the box borders).
+const MESSAGE_MARGIN = 3;
+
 function getLatestReviews(reviews: Review[]): Map<string, string> {
   const latest = new Map<string, string>();
   // reviews are in chronological order, so last one per author wins
@@ -173,11 +222,28 @@ export default function githubPrsExtension(pi: ExtensionAPI) {
 
         // Column widths
         const colPr = Math.max(...rows.map((r) => displayWidth(r.pr)));
-        const colContent = Math.max(
+        const colStatus = Math.max(displayWidth(APPROVAL_EMOJI), ...rows.map((r) => displayWidth(r.status)));
+
+        // Natural content width (widest title/reviewer line).
+        const naturalContent = Math.max(
           ...rows.map((r) => displayWidth(r.title)),
           ...rows.map((r) => displayWidth(r.reviewers))
         );
-        const colStatus = Math.max(displayWidth(APPROVAL_EMOJI), ...rows.map((r) => displayWidth(r.status)));
+
+        // Clamp the content column so the whole table fits the usable width.
+        // Fixed overhead per row: 4 vertical bars + 6 padding spaces + the
+        // fixed-width PR and status columns. The usable width is the pane width
+        // minus the notify Text component's padding (MESSAGE_MARGIN).
+        const usableWidth = terminalWidth() - MESSAGE_MARGIN;
+        const fixedOverhead = 4 + 6 + colPr + colStatus;
+        const availableContent = Math.max(10, usableWidth - fixedOverhead);
+        const colContent = Math.min(naturalContent, availableContent);
+
+        // Truncate any cells that exceed the (possibly clamped) content width.
+        for (const r of rows) {
+          r.title = truncateDisplay(r.title, colContent);
+          r.reviewers = truncateDisplay(r.reviewers, colContent);
+        }
 
         const h = (n: number) => colorize("─".repeat(n), ansi.gray);
         const v = colorize("│", ansi.gray);

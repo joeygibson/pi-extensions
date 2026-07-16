@@ -18,12 +18,114 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeSync, openSync, closeSync } from "node:fs";
 import { join, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const MIN_DURATION_MS = 3000;
+
+/** Attention color for the iTerm2 tab when the agent finishes (R, G, B, 0-255). */
+const ATTENTION_COLOR: [number, number, number] = [230, 126, 34]; // orange
+
+/** Marker prepended to the Ghostty tab title to draw attention. */
+const TAB_MARKER = "\uD83D\uDFE2 "; // 🟢 + space
+
+/**
+ * Write raw bytes directly to the controlling terminal (/dev/tty) rather than
+ * stdout, so we don't interleave with / corrupt the pi TUI's own rendering.
+ * OSC sequences are non-printing and consumed by the terminal.
+ */
+function writeToTty(data: string): void {
+  try {
+    const fd = openSync("/dev/tty", "w");
+    try {
+      writeSync(fd, data);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // No controlling tty (e.g. running headless) — silently skip.
+  }
+}
+
+/**
+ * iTerm2 tab title-bar color control via OSC 6 escape sequences.
+ * These are only interpreted by iTerm2; other terminals ignore them.
+ */
+function setITermTabColor([r, g, b]: [number, number, number]): void {
+  writeToTty(
+    `\x1b]6;1;bg;red;brightness;${r}\x07` +
+      `\x1b]6;1;bg;green;brightness;${g}\x07` +
+      `\x1b]6;1;bg;blue;brightness;${b}\x07`
+  );
+}
+
+/** Reset the iTerm2 tab color back to the profile default. */
+function resetITermTabColor(): void {
+  writeToTty(`\x1b]6;1;bg;*;default\x07`);
+}
+
+/**
+ * Set the terminal/tab title via OSC 0. In Ghostty this updates the tab label
+ * for *our* surface (the one bound to this TTY). Ghostty has no tab-color API,
+ * so a title marker is the closest attention cue available.
+ */
+function setTabTitle(title: string): void {
+  writeToTty(`\x1b]0;${title}\x07`);
+}
+
+/** The base pi title for a given cwd, matching what pi/the shell set. */
+function baseTitle(cwd: string): string {
+  return `\u03c0 - ${basename(cwd)}`; // "π - <project>"
+}
+
+type TabAttention = "iterm-color" | "ghostty-title" | "none";
+
+/**
+ * Decide which tab-attention mechanism to use for the current terminal.
+ *   - iTerm2  → OSC 6 tab color (native tab tint)
+ *   - Ghostty → OSC 0 title marker (no color API exists)
+ *   - others  → nothing (Terminal.app can only tint the whole background)
+ */
+function tabAttentionMode(): TabAttention {
+  switch (process.env.TERM_PROGRAM ?? "") {
+    case "iTerm.app":
+      return "iterm-color";
+    case "ghostty":
+      return "ghostty-title";
+    default:
+      return "none";
+  }
+}
+
+/** Apply the attention cue to our tab. Returns true if anything was applied. */
+function markTabAttention(cwd: string): boolean {
+  switch (tabAttentionMode()) {
+    case "iterm-color":
+      setITermTabColor(ATTENTION_COLOR);
+      return true;
+    case "ghostty-title":
+      setTabTitle(TAB_MARKER + baseTitle(cwd));
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** Remove the attention cue, restoring the tab to its normal state. */
+function clearTabAttention(cwd: string): void {
+  switch (tabAttentionMode()) {
+    case "iterm-color":
+      resetITermTabColor();
+      break;
+    case "ghostty-title":
+      setTabTitle(baseTitle(cwd));
+      break;
+    default:
+      break;
+  }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -254,9 +356,16 @@ export default function (pi: ExtensionAPI) {
   }
 
   let agentStartTime: number | null = null;
+  let tabMarked = false;
 
-  pi.on("agent_start", async () => {
+  pi.on("agent_start", async (_event, ctx) => {
     agentStartTime = Date.now();
+    // Returning to the tab to submit a prompt means the user has seen it —
+    // clear any attention cue set by the previous agent_end.
+    if (tabMarked) {
+      clearTabAttention(ctx.cwd);
+      tabMarked = false;
+    }
   });
 
   pi.on("agent_end", async (_event, ctx) => {
@@ -272,6 +381,19 @@ export default function (pi: ExtensionAPI) {
         ? ` (${tab.tabTitle} · tab ${tab.tabNumber})`
         : "";
       sendNotification(appPath, "pi", `Done — ${seconds}s${tabInfo}`);
+
+      // Draw attention to the tab (iTerm2 color / Ghostty title marker).
+      tabMarked = markTabAttention(ctx.cwd);
+    }
+  });
+
+  // Safety net: if the user quits (or reloads/switches sessions) without
+  // submitting another prompt, agent_start never fires — so clear any
+  // attention cue here to avoid leaving a stale color/title on the tab.
+  pi.on("session_shutdown", async (_event, ctx) => {
+    if (tabMarked) {
+      clearTabAttention(ctx.cwd);
+      tabMarked = false;
     }
   });
 }

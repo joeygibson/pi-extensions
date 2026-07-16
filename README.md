@@ -6,7 +6,7 @@
 |-----------|-------------|
 | **[clip](extensions/clip.ts)** | ⚠️ **Deprecated** — use the built-in `/copy` command. Copies the last assistant message to the clipboard via `/clip`. |
 | **[github-prs](extensions/github-prs.ts)** | Shows your open GitHub PRs with reviewer approval status via `/prs`. |
-| **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app). |
+| **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app), and flags the tab with an attention cue that clears when you return. |
 | **[save](extensions/save.ts)** | Saves the last assistant message as markdown to a file via `/save [filepath]`. Auto-generates a filename from context if none is given. |
 | **[security-guard](extensions/security-guard.ts)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. |
 
@@ -208,6 +208,18 @@ cd macos-notify-app
 ```
 
 See [macos-notify-app/README.md](macos-notify-app/README.md) for details.
+
+**Tab attention cue:** When the notification fires, the extension also flags the
+tab so you can spot it at a glance:
+
+- **iTerm2** — tints the tab title bar (orange) via an OSC 6 escape sequence.
+- **Ghostty** — prepends a green dot (🟢) to the tab title via OSC 0, since
+  Ghostty has no tab-color API.
+- **Terminal.app / others** — no cue (Terminal.app can only tint the entire
+  background, which is too intrusive).
+
+The cue is cleared automatically when you return to the tab and submit your next
+prompt, or when you quit / `/reload` / switch sessions.
 
 ## License
 

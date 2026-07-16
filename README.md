@@ -221,6 +221,10 @@ tab so you can spot it at a glance:
 The cue is cleared automatically when you return to the tab and submit your next
 prompt, or when you quit / `/reload` / switch sessions.
 
+The cue is automatically suppressed when pi is running inside a `herdr` pane
+(detected via the `HERDR_*` env vars), since herdr already indicates which
+agent needs attention.
+
 ## License
 
 [MIT](LICENSE)

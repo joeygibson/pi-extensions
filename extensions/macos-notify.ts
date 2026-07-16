@@ -83,12 +83,23 @@ function baseTitle(cwd: string): string {
 type TabAttention = "iterm-color" | "ghostty-title" | "none";
 
 /**
+ * Whether pi is running inside a herdr pane. herdr injects HERDR_* env vars
+ * into child processes and already surfaces which agent needs attention, so we
+ * skip our own tab cue to avoid redundant (and conflicting) signalling.
+ */
+function runningInHerdr(): boolean {
+  return Boolean(process.env.HERDR_PANE_ID ?? process.env.HERDR_SESSION);
+}
+
+/**
  * Decide which tab-attention mechanism to use for the current terminal.
+ *   - herdr    → nothing (herdr already indicates the agent needing attention)
  *   - iTerm2  → OSC 6 tab color (native tab tint)
  *   - Ghostty → OSC 0 title marker (no color API exists)
  *   - others  → nothing (Terminal.app can only tint the whole background)
  */
 function tabAttentionMode(): TabAttention {
+  if (runningInHerdr()) return "none";
   switch (process.env.TERM_PROGRAM ?? "") {
     case "iTerm.app":
       return "iterm-color";

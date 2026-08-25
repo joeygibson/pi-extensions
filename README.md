@@ -4,16 +4,10 @@
 
 | Extension | Description |
 |-----------|-------------|
-| **[github-prs](extensions/github-prs.ts)** | Shows your open GitHub PRs with reviewer approval status via `/prs`. |
-| **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app), and flags the tab with an attention cue that clears when you return. |
-| **[save](extensions/save.ts)** | Saves the last assistant message as markdown to a file via `/save [filepath]`. Auto-generates a filename from context if none is given. |
-| **[security-guard](extensions/security-guard.ts)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. |
-
-## ⚠️ Package Rename (v1.2.0+)
-
-As of pi v0.74.0, the package has been renamed from `@mariozechner/pi-coding-agent`
-to `@earendil-works/pi-coding-agent`. If you're on an older version of these
-extensions, update to v1.2.0+ to stay compatible.
+| **[github-prs](#github-prs)** | Shows your open GitHub PRs with reviewer approval status via `/prs`. ([source](extensions/github-prs.ts)) |
+| **[macos-notify](#macos-notify)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app), and flags the tab with an attention cue that clears when you return. ([source](extensions/macos-notify.ts)) |
+| **[save](#save)** | Saves the last assistant message as markdown to a file via `/save [filepath]`. Auto-generates a filename from context if none is given. ([source](extensions/save.ts)) |
+| **[security-guard](#security-guard)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. ([source](extensions/security-guard.ts)) |
 
 ## Install All Extensions
 
@@ -137,6 +131,18 @@ offending command segment is highlighted in red and wrapped in `»…«` markers
 — from the trigger through its arguments — so dangerous operations like a
 nested `rm -rf` are easy to spot. Highlighting stops at shell separators
 (`&&`, `||`, `|`, `;`, newline), so neighboring commands stay uncolored.
+
+**Approval notifications:** When a rule triggers a `prompt`, pi blocks and
+waits for your answer — which is easy to miss if you've stepped away. To catch
+your attention, security-guard fires a native macOS notification titled
+**“pi — approval needed”** (with the `Submarine` sound) the moment the prompt
+appears, and re-fires it every 30 seconds until you respond. This is distinct
+from the one-shot “Done” toast that [macos-notify](#macos-notify) shows on
+completion, so you can tell “pi finished” apart from “pi needs me.” The
+notification reuses the same `PiNotify.app` bundle as macos-notify; if that app
+isn't available the prompt still works, just without the toast. The sound and
+interval are constants (`APPROVAL_SOUND`, `NUDGE_INTERVAL_MS`) at the top of
+`extensions/security-guard.ts`.
 
 ### save
 

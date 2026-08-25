@@ -4,7 +4,6 @@
 
 | Extension | Description |
 |-----------|-------------|
-| **[clip](extensions/clip.ts)** | ⚠️ **Deprecated** — use the built-in `/copy` command. Copies the last assistant message to the clipboard via `/clip`. |
 | **[github-prs](extensions/github-prs.ts)** | Shows your open GitHub PRs with reviewer approval status via `/prs`. |
 | **[macos-notify](extensions/macos-notify.ts)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app), and flags the tab with an attention cue that clears when you return. |
 | **[save](extensions/save.ts)** | Saves the last assistant message as markdown to a file via `/save [filepath]`. Auto-generates a filename from context if none is given. |
@@ -46,19 +45,6 @@ Or just the notification extension:
     {
       "source": "git:github.com/joeygibson/pi-extensions",
       "extensions": ["extensions/macos-notify.ts"]
-    }
-  ]
-}
-```
-
-Or just the clipboard extension:
-
-```json
-{
-  "packages": [
-    {
-      "source": "git:github.com/joeygibson/pi-extensions",
-      "extensions": ["extensions/clip.ts"]
     }
   ]
 }
@@ -151,21 +137,6 @@ offending command segment is highlighted in red and wrapped in `»…«` markers
 — from the trigger through its arguments — so dangerous operations like a
 nested `rm -rf` are easy to spot. Highlighting stops at shell separators
 (`&&`, `||`, `|`, `;`, newline), so neighboring commands stay uncolored.
-
-### clip (deprecated)
-
-> ⚠️ **Deprecated:** Pi now has a built-in `/copy` command that does the same
-> thing. This extension is kept for backward compatibility but will be removed
-> in a future release.
-
-Registers a `/clip` command that copies the last assistant message (as
-markdown) to the clipboard. Runs entirely client-side — no LLM round-trip.
-Works on macOS, Linux, and Windows:
-
-- **macOS** — uses `pbcopy` (built-in)
-- **Linux (X11)** — uses `xclip` (install with `apt install xclip` or equivalent)
-- **Linux (Wayland)** — uses `wl-copy` (install with `apt install wl-clipboard` or equivalent)
-- **Windows** — uses `clip.exe` (built-in)
 
 ### save
 

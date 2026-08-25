@@ -17,11 +17,10 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { execFile, execFileSync } from "node:child_process";
-import { existsSync, writeSync, openSync, closeSync } from "node:fs";
-import { join, basename, dirname } from "node:path";
-import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { writeSync, openSync, closeSync } from "node:fs";
+import { basename } from "node:path";
+import { resolveAppPath, sendNotification } from "../lib/pi-notify.ts";
 
 const MIN_DURATION_MS = 3000;
 
@@ -136,40 +135,6 @@ function clearTabAttention(cwd: string): void {
     default:
       break;
   }
-}
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-/** Try to build PiNotify.app from source using build.sh. */
-function tryBuild(): string | null {
-  const buildScript = join(__dirname, "..", "macos-notify-app", "build.sh");
-  if (!existsSync(buildScript)) return null;
-
-  try {
-    execFileSync(buildScript, { stdio: "pipe", timeout: 30_000 });
-    const built = join(__dirname, "..", "macos-notify-app", "PiNotify.app");
-    return existsSync(built) ? built : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Resolve PiNotify.app, checking package-local build first, then ~/.pi/agent, then auto-building. */
-function resolveAppPath(): string | null {
-  const candidates = [
-    join(__dirname, "..", "macos-notify-app", "PiNotify.app"),
-    join(homedir(), ".pi", "agent", "PiNotify.app"),
-  ];
-
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  // Not found — try building from source
-  return tryBuild();
 }
 
 /** Run an AppleScript and return stdout, or null on error/timeout. */
@@ -338,17 +303,6 @@ function findOurTab(
         .then((r) => r ?? findITerm2Tab(expectedTitle))
         .then((r) => r ?? findTerminalAppTab(expectedTitle));
   }
-}
-
-function sendNotification(
-  appPath: string,
-  title: string,
-  body: string,
-  sound = "Glass"
-) {
-  execFile("/usr/bin/open", [appPath, "--args", title, body, sound], (err) => {
-    if (err) console.error("[macos-notify] error:", err.message);
-  });
 }
 
 export default function (pi: ExtensionAPI) {

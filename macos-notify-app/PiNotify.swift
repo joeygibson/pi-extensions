@@ -21,8 +21,21 @@ let sound = args.count >= 4 ? args[3] : "Glass"
 // Hide from Dock
 NSApplication.shared.setActivationPolicy(.accessory)
 
+/// Escape a string for safe interpolation into an AppleScript double-quoted
+/// string literal. Without this, a `"` or `\` in the title/body (e.g. a bash
+/// command like `echo "hi"`) breaks the script so it never compiles and no
+/// notification is shown. Newlines are collapsed to spaces (AppleScript string
+/// literals can't span raw newlines).
+func escapeForAppleScript(_ s: String) -> String {
+    var out = s.replacingOccurrences(of: "\\", with: "\\\\")
+    out = out.replacingOccurrences(of: "\"", with: "\\\"")
+    out = out.replacingOccurrences(of: "\n", with: " ")
+    out = out.replacingOccurrences(of: "\r", with: " ")
+    return out
+}
+
 let source = """
-    display notification "\(body)" with title "\(title)" sound name "\(sound)"
+    display notification "\(escapeForAppleScript(body))" with title "\(escapeForAppleScript(title))" sound name "\(escapeForAppleScript(sound))"
 """
 
 let script = NSAppleScript(source: source)

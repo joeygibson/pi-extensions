@@ -13,6 +13,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { resolveAppPath, sendNotification } from "../lib/pi-notify.ts";
+
+/** Native notification sound + repeat interval for approval prompts. */
+const APPROVAL_SOUND = "Submarine";
+const NUDGE_INTERVAL_MS = 30_000;
 
 const DEBUG = false; // Set to true for verbose logging
 
@@ -297,8 +302,45 @@ mkfs = block
   }
 }
 
+/**
+ * Show an approval prompt while nudging the user with a native macOS
+ * notification (Submarine sound) immediately and then every
+ * NUDGE_INTERVAL_MS until they respond. This covers the "walked away and pi
+ * is silently blocked waiting on approval" case — the repeating toast/sound
+ * pulls the user back, distinct from the one-shot "Done" notification.
+ *
+ * Degrades gracefully: if appPath is null (PiNotify.app unavailable) the
+ * prompt still shows, just without the native nudge.
+ */
+async function selectWithNudge(
+  ctx: { ui: { select: (message: string, options: string[]) => Promise<string> } },
+  appPath: string | null,
+  notifyBody: string,
+  message: string,
+  options: string[]
+): Promise<string> {
+  const alert = () => {
+    if (appPath) {
+      sendNotification(appPath, "pi — approval needed", notifyBody, APPROVAL_SOUND);
+    }
+  };
+
+  alert();
+  const timer = setInterval(alert, NUDGE_INTERVAL_MS);
+  try {
+    return await ctx.ui.select(message, options);
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 export default function (pi: ExtensionAPI) {
   ensureExampleConfig();
+
+  // Resolve PiNotify.app once so approval prompts can nudge the user with a
+  // native macOS notification (see selectWithNudge). May be null if the app
+  // isn't built yet / build fails — the nudge then degrades to no toast.
+  const appPath = resolveAppPath();
 
   // Rules are loaded on initialization. When /reload is called,
   // pi re-initializes this extension, which loads fresh rules.
@@ -363,7 +405,10 @@ export default function (pi: ExtensionAPI) {
             };
           }
 
-          const choice = await ctx.ui.select(
+          const choice = await selectWithNudge(
+            ctx,
+            appPath,
+            command,
             `⚠️ Security check: Command contains "${matchedRule.pattern}"\n\nCommand: ${highlightMatch(command, matchedRule, (s) => ctx.ui.theme.fg("error", s))}\n\nAllow?`,
             ["Allow", "Deny"]
           );
@@ -414,7 +459,10 @@ export default function (pi: ExtensionAPI) {
             };
           }
 
-          const choice = await ctx.ui.select(
+          const choice = await selectWithNudge(
+            ctx,
+            appPath,
+            `Write ${filePath}`,
             `⚠️ Security check: Writing to file matching "${matchedRule.pattern}"\n\nPath: ${highlightMatch(filePath, matchedRule, (s) => ctx.ui.theme.fg("error", s))}\n\nAllow?`,
             ["Allow", "Deny"]
           );
@@ -465,7 +513,10 @@ export default function (pi: ExtensionAPI) {
             };
           }
 
-          const choice = await ctx.ui.select(
+          const choice = await selectWithNudge(
+            ctx,
+            appPath,
+            `Read ${filePath}`,
             `⚠️ Security check: Reading file matching "${matchedRule.pattern}"\n\nPath: ${highlightMatch(filePath, matchedRule, (s) => ctx.ui.theme.fg("error", s))}\n\nAllow?`,
             ["Allow", "Deny"]
           );

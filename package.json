@@ -1,6 +1,6 @@
 {
   "name": "@joeygibson/pi-extensions",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Pi coding agent extensions: security-guard, macos-notify, github-prs, and save",
   "keywords": ["pi-package"],
   "license": "MIT",
@@ -11,6 +11,9 @@
   },
   "pi": {
     "extensions": ["./extensions"]
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

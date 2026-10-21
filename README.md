@@ -163,8 +163,10 @@ automatically if they don't exist.
 Sends a native macOS notification (with pi's icon) when the agent has been
 working for 3+ seconds and finishes. Includes tab name and number if
 available. Supports **Ghostty**, **iTerm2**, and **Terminal.app** — the
-terminal is detected automatically via `TERM_PROGRAM`. For unknown terminals,
-all three are tried in sequence.
+terminal is detected automatically via `TERM_PROGRAM`. Only the recognized host
+is queried, and its script checks that the app is already running before reading
+tabs. Unknown or missing terminal metadata simply omits tab details; it never
+triggers a fallback search through other terminal apps.
 
 This extension requires a small native macOS app bundle (`PiNotify.app`) to
 deliver notifications. Using an `.app` bundle — rather than bare `osascript` —
@@ -198,9 +200,26 @@ tab so you can spot it at a glance:
 The cue is cleared automatically when you return to the tab and submit your next
 prompt, or when you quit / `/reload` / switch sessions.
 
-The cue is automatically suppressed when pi is running inside a `herdr` pane
-(detected via the `HERDR_*` env vars), since herdr already indicates which
-agent needs attention.
+Both tab lookup and the cue are suppressed inside `herdr` (detected via
+`TERM_PROGRAM=herdr`, `HERDR_ENV=1`, or the pane/session environment variables),
+since herdr already indicates which agent needs attention. Native notifications
+still arrive, without tab details. This avoids starting Terminal.app while
+trying to find a multiplexer-owned tab.
+
+After editing a locally installed extension, run `/reload` in each active pi
+session to load the change. No rebuild of `PiNotify.app` is needed for this fix.
+
+## Tests
+
+With Node.js 22.19+ (as required by current pi releases):
+
+```sh
+npm test
+```
+
+Tests use Node's built-in runner and TypeScript support. They mock every child
+process and terminal write; they do not open apps, send real notifications,
+change terminal settings, or require npm dependency installation.
 
 ## License
 

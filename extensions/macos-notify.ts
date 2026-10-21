@@ -87,7 +87,11 @@ type TabAttention = "iterm-color" | "ghostty-title" | "none";
  * skip our own tab cue to avoid redundant (and conflicting) signalling.
  */
 function runningInHerdr(): boolean {
-  return Boolean(process.env.HERDR_PANE_ID ?? process.env.HERDR_SESSION);
+  return (
+    process.env.TERM_PROGRAM === "herdr" ||
+    process.env.HERDR_ENV === "1" ||
+    Boolean(process.env.HERDR_PANE_ID || process.env.HERDR_SESSION)
+  );
 }
 
 /**
@@ -180,6 +184,7 @@ function findGhosttyTab(
   expectedTitle: string
 ): Promise<{ tabNumber: number; tabTitle: string } | null> {
   const script = `
+    if not (application id "com.mitchellh.ghostty" is running) then return ""
     tell application "System Events"
       tell process "Ghostty"
         tell tab group "tab bar" of window 1
@@ -207,6 +212,7 @@ function findITerm2Tab(
   // iTerm2 session "name" reflects the escape-sequence-set title (e.g. "π - project").
   // We iterate all windows and tabs to find a matching session.
   const script = `
+    if not (application id "com.googlecode.iterm2" is running) then return ""
     tell application "iTerm2"
       set resultLines to ""
       set tabIndex to 1
@@ -236,6 +242,7 @@ function findTerminalAppTab(
   // custom title, shell, and dimensions (e.g. "dir — title — zsh — 80×24").
   // We check both the custom title and the window name for a match.
   const script = `
+    if not (application id "com.apple.Terminal" is running) then return ""
     tell application "Terminal"
       set resultLines to ""
       set tabIndex to 1
@@ -285,6 +292,9 @@ function findTerminalAppTab(
 function findOurTab(
   cwd: string
 ): Promise<{ tabNumber: number; tabTitle: string } | null> {
+  // A multiplexer owns the native tab; probing unrelated apps can launch them.
+  if (runningInHerdr()) return Promise.resolve(null);
+
   const project = basename(cwd);
   const expectedTitle = `π - ${project}`;
   const term = process.env.TERM_PROGRAM ?? "";
@@ -297,11 +307,9 @@ function findOurTab(
     case "Apple_Terminal":
       return findTerminalAppTab(expectedTitle);
     default:
-      // Unknown terminal — try Ghostty first (most common for pi users),
-      // then fall back to iTerm2, then Terminal.app.
-      return findGhosttyTab(expectedTitle)
-        .then((r) => r ?? findITerm2Tab(expectedTitle))
-        .then((r) => r ?? findTerminalAppTab(expectedTitle));
+      // Missing/unknown metadata is not permission to probe other terminal apps.
+      // Keep the notification, just omit tab details.
+      return Promise.resolve(null);
   }
 }
 

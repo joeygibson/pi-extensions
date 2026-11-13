@@ -109,15 +109,16 @@ momentum or self-confirmation bias.
 
 **Which directory gets reviewed.** The command works in git worktrees, which
 matters when a pi session lives in your main clone but did its work on a branch
-in a separate worktree. Before building the diff, `/review` scans the repo's
-worktrees and picks the one with actual work (uncommitted changes **or** commits
-ahead of its base):
+in a separate worktree. Unless you pass `--cwd`, `/review` figures out where to
+look, in order:
 
-- If your current directory has work, it's used (no prompt).
-- Otherwise, if exactly one other worktree has work, it's auto-selected and you
-  get a one-key confirm showing the path and scope before anything runs.
-- If several worktrees have work, you're asked to pick.
-- `--cwd <path>` skips detection entirely.
+- **Infer from this session's transcript** — the worktree whose files the
+  session edited/wrote (or `cd`'d / `git worktree add`'d / `git -C`'d into) most
+  recently. No prompt; this is the common case.
+- Otherwise **scan the repo's worktrees** for one with work (uncommitted changes
+  **or** commits ahead of base): the current dir if it has work, else a single
+  other candidate auto-selected, else a picker.
+- `--cwd <path>` skips all detection.
 
 Whenever the reviewed directory isn't your current one — or the target falls
 back to committed history — `/review` confirms (`Review <scope> in <path>?`)

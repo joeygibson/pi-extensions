@@ -9,11 +9,13 @@
  *
  * Working directory: a session often lives in the main clone while its work
  * happens on a branch in a separate worktree. So unless `--cwd <path>` is given,
- * /review scans the repo's worktrees and picks the one with work (uncommitted
- * changes or commits ahead of base): the current dir if it has work, else the
- * single other candidate, else a picker. When the chosen dir isn't the session
- * cwd — or the target falls back to committed history — it confirms before
- * running, so it can never silently review the wrong thing.
+ * /review first infers the worktree from this session's own transcript (the
+ * files it edited/wrote, and any `git worktree add` / `cd` / `git -C` it ran).
+ * Failing that, it scans the repo's worktrees and picks the one with work
+ * (uncommitted changes or commits ahead of base): the current dir if it has
+ * work, else the single other candidate, else a picker. When the chosen dir
+ * isn't the session cwd — or the target falls back to committed history — it
+ * confirms before running, so it can never silently review the wrong thing.
  *
  * Model precedence (highest first):
  *   1. `/review <model>` argument
@@ -228,6 +230,28 @@ function realpathOrSelf(p: string): string {
   }
 }
 
+/**
+ * Normalize a path for prefix comparison by symlink-resolving its deepest
+ * existing ancestor and re-appending the rest. This makes a worktree root and a
+ * path under it compare equal even when the file no longer exists or the repo
+ * lives under a symlinked dir (e.g. macOS /tmp -> /private/tmp).
+ */
+function normalizeForMatch(p: string): string {
+  let cur = path.resolve(p);
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      const real = fs.realpathSync(cur);
+      return tail.length ? path.join(real, ...tail.reverse()) : real;
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return path.resolve(p);
+      tail.push(path.basename(cur));
+      cur = parent;
+    }
+  }
+}
+
 interface Worktree {
   path: string;
   branch: string;
@@ -288,27 +312,102 @@ interface ChosenDir {
   cancelled?: boolean;
 }
 
+function sameDir(a: string, b: string): boolean {
+  return realpathOrSelf(a) === realpathOrSelf(b);
+}
+
+/** Absolute paths this session actually operated on, oldest -> newest. */
+function extractSessionPaths(entries: readonly unknown[]): string[] {
+  const out: string[] = [];
+  const pushAbs = (p: string | undefined) => {
+    if (!p) return;
+    let x = p.trim();
+    if (!x) return;
+    if (x === "~") x = os.homedir();
+    else if (x.startsWith("~/")) x = path.join(os.homedir(), x.slice(2));
+    if (x.startsWith("/")) out.push(x);
+  };
+  for (const e of entries as any[]) {
+    if (e?.type !== "message") continue;
+    const msg = e.message;
+    if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    for (const b of msg.content) {
+      if (b?.type !== "toolCall") continue;
+      const name = b.name;
+      const a = b.arguments ?? {};
+      // edit/write are the strongest "work" signal (read is excluded: reading a
+      // reference file elsewhere should not move the target).
+      if ((name === "edit" || name === "write") && typeof a.path === "string") {
+        pushAbs(a.path);
+      } else if (name === "bash" && typeof a.command === "string") {
+        const cmd: string = a.command;
+        for (const m of cmd.matchAll(
+          /git\s+worktree\s+add\s+(?:--?\S+\s+)*(['"]?)([~/][^\s'"]*)\1/g,
+        ))
+          pushAbs(m[2]);
+        for (const m of cmd.matchAll(/(?:^|[;&|]\s*)cd\s+(['"]?)([~/][^\s'"]*)\1/g)) pushAbs(m[2]);
+        for (const m of cmd.matchAll(/git\s+-C\s+(['"]?)([~/][^\s'"]*)\1/g)) pushAbs(m[2]);
+      }
+    }
+  }
+  return out;
+}
+
 /**
- * Pick which worktree to review. Prefers the session's own worktree when it has
- * work; otherwise auto-selects the single candidate, or prompts when several.
+ * Infer, from this session's transcript, which worktree it was working in.
+ * Returns the worktree root of the most recent path the session touched, or
+ * null when nothing in the transcript points at a known worktree.
  */
-async function pickWorktree(
+function inferWorktree(entries: readonly unknown[], worktrees: Worktree[]): string | null {
+  const roots = worktrees.map((w) => ({ raw: w.path, norm: normalizeForMatch(w.path) }));
+  let match: string | null = null;
+  for (const p of extractSessionPaths(entries)) {
+    const norm = normalizeForMatch(p);
+    for (const r of roots) {
+      if (norm === r.norm || norm.startsWith(r.norm + path.sep)) {
+        match = r.raw; // keep overwriting: the last match wins (most recent)
+        break;
+      }
+    }
+  }
+  return match;
+}
+
+async function getWorktreeContext(
+  gitFactory: GitFactory,
+  originCwd: string,
+): Promise<{ cwdRoot: string; worktrees: Worktree[] }> {
+  const top = await gitFactory(originCwd)(["rev-parse", "--show-toplevel"]);
+  const cwdRoot = top.code === 0 && top.stdout.trim() ? top.stdout.trim() : originCwd;
+  const worktrees = await listWorktrees(gitFactory(cwdRoot));
+  return { cwdRoot, worktrees };
+}
+
+/**
+ * Choose which directory to review when no --cwd was given. First tries to
+ * infer the worktree from this session's own transcript (what it edited / cd'd
+ * into); failing that, scans worktrees for one with work and auto-picks the
+ * sole candidate, prompting only when several qualify.
+ */
+async function autoResolveCwd(
+  entries: readonly unknown[],
   gitFactory: GitFactory,
   originCwd: string,
   ui: { select: (title: string, items: string[]) => Promise<string | undefined> },
   hasUI: boolean,
 ): Promise<ChosenDir> {
-  const top = await gitFactory(originCwd)(["rev-parse", "--show-toplevel"]);
-  const cwdRoot = top.code === 0 && top.stdout.trim() ? top.stdout.trim() : originCwd;
-  const worktrees = await listWorktrees(gitFactory(cwdRoot));
+  const { cwdRoot, worktrees } = await getWorktreeContext(gitFactory, originCwd);
   if (worktrees.length <= 1) return { cwd: cwdRoot, switched: false };
 
+  // 1. infer from the session transcript (no prompt needed)
+  const inferred = inferWorktree(entries, worktrees);
+  if (inferred) return { cwd: inferred, switched: !sameDir(inferred, cwdRoot) };
+
+  // 2. scan for worktrees that have work
   const candidates: Worktree[] = [];
   for (const wt of worktrees) {
     if (await worktreeHasWork(gitFactory(wt.path))) candidates.push(wt);
   }
-  const sameDir = (a: string, b: string) => realpathOrSelf(a) === realpathOrSelf(b);
-
   if (candidates.some((c) => sameDir(c.path, cwdRoot))) return { cwd: cwdRoot, switched: false };
   if (candidates.length === 0) return { cwd: cwdRoot, switched: false };
   if (candidates.length === 1) return { cwd: candidates[0].path, switched: true };
@@ -687,9 +786,15 @@ export default function reviewExtension(pi: ExtensionAPI) {
         reviewCwd = resolvePath(cwdArg, originCwd);
         switched = realpathOrSelf(reviewCwd) !== realpathOrSelf(originCwd);
       } else {
-        ctx.ui.setStatus("review", "locating worktree with changes\u2026");
+        ctx.ui.setStatus("review", "locating the worktree with the work\u2026");
         try {
-          const chosen = await pickWorktree(gitFactory, originCwd, ctx.ui, ctx.hasUI);
+          const chosen = await autoResolveCwd(
+            ctx.sessionManager.getBranch(),
+            gitFactory,
+            originCwd,
+            ctx.ui,
+            ctx.hasUI,
+          );
           if (chosen.cancelled) {
             ctx.ui.setStatus("review", "");
             ctx.ui.notify("Review cancelled.", "info");

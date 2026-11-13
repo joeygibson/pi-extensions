@@ -5,7 +5,7 @@
 | Extension | Description |
 |-----------|-------------|
 | **[github-prs](#github-prs)** | Shows your open GitHub PRs with reviewer approval status via `/prs`. ([source](extensions/github-prs.ts)) |
-| **[review](#review)** | Spawns a fresh, isolated `pi` process to adversarially review your recent work (uncommitted changes, new files, or unpushed commits) via `/review [model] [--base <ref>]`. ([source](extensions/review.ts)) |
+| **[review](#review)** | Spawns a fresh, isolated `pi` process to adversarially review your recent work (uncommitted, new files, or unpushed commits; finds the right worktree) via `/review [model] [--base <ref>] [--cwd <path>]`. ([source](extensions/review.ts)) |
 | **[macos-notify](#macos-notify)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app), and flags the tab with an attention cue that clears when you return. ([source](extensions/macos-notify.ts)) |
 | **[save](#save)** | Saves the last assistant message as markdown to a file via `/save [filepath]`. Auto-generates a filename from context if none is given. ([source](extensions/save.ts)) |
 | **[security-guard](#security-guard)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. ([source](extensions/security-guard.ts)) |
@@ -103,6 +103,25 @@ momentum or self-confirmation bias.
   `main` (committed + uncommitted + new files). Tab completion after `--base`
   lists branches/tags.
 - **`/review gpt-6.1-sol --base HEAD~3`** — both at once.
+- **`/review --cwd ~/.git-worktrees/XDR-1234-foo`** — review a specific
+  directory/worktree instead of auto-detecting (tab completion after `--cwd`
+  lists the repo's worktrees).
+
+**Which directory gets reviewed.** The command works in git worktrees, which
+matters when a pi session lives in your main clone but did its work on a branch
+in a separate worktree. Before building the diff, `/review` scans the repo's
+worktrees and picks the one with actual work (uncommitted changes **or** commits
+ahead of its base):
+
+- If your current directory has work, it's used (no prompt).
+- Otherwise, if exactly one other worktree has work, it's auto-selected and you
+  get a one-key confirm showing the path and scope before anything runs.
+- If several worktrees have work, you're asked to pick.
+- `--cwd <path>` skips detection entirely.
+
+Whenever the reviewed directory isn't your current one — or the target falls
+back to committed history — `/review` confirms (`Review <scope> in <path>?`)
+**before** spending a model call, so it can't silently review the wrong thing.
 
 **Model precedence** (highest first): the `/review <model>` argument, then
 `model` in `~/.pi/agent/review.toml`, then the built-in default

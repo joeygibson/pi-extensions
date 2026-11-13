@@ -1,11 +1,19 @@
 /**
  * Review Extension
  *
- * Registers a `/review [model] [--base <ref>]` command that spawns a fresh,
- * isolated `pi` process to adversarially review your recent work. The reviewer
- * runs in its own context (`--no-session`), with read-only tools, and critiques
- * the diff: bugs, security holes, missed edge cases, untested paths, and
- * anything that contradicts the stated intent.
+ * Registers a `/review [model] [--base <ref>] [--cwd <path>]` command that
+ * spawns a fresh, isolated `pi` process to adversarially review your recent
+ * work. The reviewer runs in its own context (`--no-session`), with read-only
+ * tools, and critiques the diff: bugs, security holes, missed edge cases,
+ * untested paths, and anything that contradicts the stated intent.
+ *
+ * Working directory: a session often lives in the main clone while its work
+ * happens on a branch in a separate worktree. So unless `--cwd <path>` is given,
+ * /review scans the repo's worktrees and picks the one with work (uncommitted
+ * changes or commits ahead of base): the current dir if it has work, else the
+ * single other candidate, else a picker. When the chosen dir isn't the session
+ * cwd — or the target falls back to committed history — it confirms before
+ * running, so it can never silently review the wrong thing.
  *
  * Model precedence (highest first):
  *   1. `/review <model>` argument
@@ -162,11 +170,12 @@ function loadConfig(modelArg: string): ReviewConfig {
   };
 }
 
-/** Split the raw argument string into a model token and an optional --base ref. */
-function parseArgs(raw: string): { model: string; base?: string } {
+/** Split the raw argument string into a model token, an optional --base ref, and --cwd. */
+function parseArgs(raw: string): { model: string; base?: string; cwd?: string } {
   const tokens = raw.trim().split(/\s+/).filter(Boolean);
   let model = "";
   let base: string | undefined;
+  let cwd: string | undefined;
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (t === "--base" || t === "-b") {
@@ -174,20 +183,143 @@ function parseArgs(raw: string): { model: string; base?: string } {
       i++;
     } else if (t.startsWith("--base=")) {
       base = t.slice("--base=".length);
+    } else if (t === "--cwd" || t === "-C") {
+      cwd = tokens[i + 1];
+      i++;
+    } else if (t.startsWith("--cwd=")) {
+      cwd = t.slice("--cwd=".length);
     } else if (!model && !t.startsWith("-")) {
       model = t;
     }
   }
-  return { model, base };
+  return { model, base, cwd };
 }
 
 interface DiffTarget {
   text: string;
   label: string;
+  /** True when no uncommitted work was found and we fell back to committed history. */
+  fallback: boolean;
 }
 
 type GitRunner = (args: string[]) => Promise<{ stdout: string; stderr: string; code: number }>;
 type ShellRunner = (command: string) => Promise<{ stdout: string; stderr: string; code: number }>;
+type GitFactory = (cwd: string) => GitRunner;
+
+/** Expand a leading ~ and resolve relative to a base directory. */
+function resolvePath(p: string, baseCwd: string): string {
+  let expanded = p;
+  if (expanded === "~") expanded = os.homedir();
+  else if (expanded.startsWith("~/")) expanded = path.join(os.homedir(), expanded.slice(2));
+  return path.resolve(baseCwd, expanded);
+}
+
+/** Shorten a path for display, collapsing $HOME to ~. */
+function shortPath(p: string): string {
+  const home = os.homedir();
+  return p === home || p.startsWith(`${home}/`) ? `~${p.slice(home.length)}` : p;
+}
+
+function realpathOrSelf(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+interface Worktree {
+  path: string;
+  branch: string;
+}
+
+/** Parse `git worktree list --porcelain` into {path, branch} entries. */
+async function listWorktrees(gitRepo: GitRunner): Promise<Worktree[]> {
+  const r = await gitRepo(["worktree", "list", "--porcelain"]);
+  if (r.code !== 0) return [];
+  const out: Worktree[] = [];
+  let current: Partial<Worktree> = {};
+  for (const line of r.stdout.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      current = { path: line.slice("worktree ".length).trim() };
+    } else if (line.startsWith("branch ")) {
+      current.branch = line.slice("branch ".length).trim().replace(/^refs\/heads\//, "");
+    } else if (line.startsWith("detached")) {
+      current.branch = "(detached)";
+    } else if (line.trim() === "" && current.path) {
+      out.push({ path: current.path, branch: current.branch ?? "" });
+      current = {};
+    }
+  }
+  if (current.path) out.push({ path: current.path, branch: current.branch ?? "" });
+  return out;
+}
+
+/** Does this worktree have commits beyond its upstream/default base? */
+async function aheadOfBase(git: GitRunner): Promise<boolean> {
+  const upstream = await git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]);
+  let base = upstream.code === 0 && upstream.stdout.trim() ? upstream.stdout.trim() : "";
+  if (!base) {
+    for (const cand of ["origin/main", "origin/master", "main", "master"]) {
+      const v = await git(["rev-parse", "--verify", "--quiet", `${cand}^{commit}`]);
+      if (v.code === 0 && v.stdout.trim()) {
+        base = cand;
+        break;
+      }
+    }
+  }
+  if (!base) return false;
+  const cnt = await git(["rev-list", "--count", `${base}..HEAD`]);
+  return cnt.code === 0 && Number.parseInt(cnt.stdout.trim() || "0", 10) > 0;
+}
+
+/** A worktree is a review candidate if it has uncommitted changes or commits ahead. */
+async function worktreeHasWork(git: GitRunner): Promise<boolean> {
+  const status = await git(["status", "--porcelain"]);
+  if (status.code === 0 && status.stdout.trim()) return true;
+  return aheadOfBase(git);
+}
+
+interface ChosenDir {
+  cwd: string;
+  /** True when we picked a directory other than where the session is. */
+  switched: boolean;
+  /** True when the user cancelled a multi-worktree selection. */
+  cancelled?: boolean;
+}
+
+/**
+ * Pick which worktree to review. Prefers the session's own worktree when it has
+ * work; otherwise auto-selects the single candidate, or prompts when several.
+ */
+async function pickWorktree(
+  gitFactory: GitFactory,
+  originCwd: string,
+  ui: { select: (title: string, items: string[]) => Promise<string | undefined> },
+  hasUI: boolean,
+): Promise<ChosenDir> {
+  const top = await gitFactory(originCwd)(["rev-parse", "--show-toplevel"]);
+  const cwdRoot = top.code === 0 && top.stdout.trim() ? top.stdout.trim() : originCwd;
+  const worktrees = await listWorktrees(gitFactory(cwdRoot));
+  if (worktrees.length <= 1) return { cwd: cwdRoot, switched: false };
+
+  const candidates: Worktree[] = [];
+  for (const wt of worktrees) {
+    if (await worktreeHasWork(gitFactory(wt.path))) candidates.push(wt);
+  }
+  const sameDir = (a: string, b: string) => realpathOrSelf(a) === realpathOrSelf(b);
+
+  if (candidates.some((c) => sameDir(c.path, cwdRoot))) return { cwd: cwdRoot, switched: false };
+  if (candidates.length === 0) return { cwd: cwdRoot, switched: false };
+  if (candidates.length === 1) return { cwd: candidates[0].path, switched: true };
+
+  if (!hasUI) return { cwd: cwdRoot, switched: false };
+  const items = candidates.map((c) => `${shortPath(c.path)}${c.branch ? `  (${c.branch})` : ""}`);
+  const picked = await ui.select("Review which worktree?", items);
+  if (!picked) return { cwd: cwdRoot, switched: false, cancelled: true };
+  const chosen = candidates[items.indexOf(picked)];
+  return { cwd: chosen.path, switched: !sameDir(chosen.path, cwdRoot) };
+}
 
 /** Build a diff for untracked (new, non-ignored) files, with size caps. */
 async function collectUntracked(
@@ -252,7 +384,7 @@ async function resolveTarget(
     if (!text.trim()) return null;
     const newNote = untracked.count > 0 ? ` + ${untracked.count} new file(s)` : "";
     const mbNote = mb.code === 0 ? " (merge-base)" : "";
-    return { text, label: `work since ${base}${mbNote}${newNote}` };
+    return { text, label: `work since ${base}${mbNote}${newNote}`, fallback: false };
   }
 
   // 2. diff_command override (power user owns the whole target)
@@ -260,7 +392,7 @@ async function resolveTarget(
     const r = await sh(cfg.diffCommand);
     if (r.code !== 0) throw new Error(r.stderr.trim() || `diff_command exited ${r.code}`);
     if (!r.stdout.trim()) return null;
-    return { text: r.stdout, label: `custom diff_command: ${cfg.diffCommand}` };
+    return { text: r.stdout, label: `custom diff_command: ${cfg.diffCommand}`, fallback: false };
   }
 
   // 3. uncommitted work (tracked edits + untracked new files)
@@ -273,7 +405,7 @@ async function resolveTarget(
     const parts: string[] = [];
     if (tracked.stdout.trim()) parts.push("tracked edits");
     if (untracked.count > 0) parts.push(`${untracked.count} new file(s)`);
-    return { text, label: `uncommitted changes (${parts.join(", ")})` };
+    return { text, label: `uncommitted changes (${parts.join(", ")})`, fallback: false };
   }
 
   // 4. fallback: unpushed / unmerged commits (handles "commit, then /review")
@@ -286,20 +418,21 @@ async function resolveTarget(
   if (upstream.code === 0 && upstream.stdout.trim()) {
     const ref = upstream.stdout.trim();
     const d = await git(["diff", `${ref}...HEAD`]);
-    if (d.stdout.trim()) return { text: d.stdout, label: `unpushed commits vs ${ref}` };
+    if (d.stdout.trim()) return { text: d.stdout, label: `unpushed commits vs ${ref}`, fallback: true };
   }
   for (const cand of ["origin/main", "origin/master", "main", "master"]) {
     const v = await git(["rev-parse", "--verify", "--quiet", `${cand}^{commit}`]);
     if (v.code === 0 && v.stdout.trim()) {
       const d = await git(["diff", `${cand}...HEAD`]);
-      if (d.stdout.trim()) return { text: d.stdout, label: `commits vs ${cand}` };
+      if (d.stdout.trim()) return { text: d.stdout, label: `commits vs ${cand}`, fallback: true };
       break; // found a base but HEAD is not ahead of it
     }
   }
   const parent = await git(["rev-parse", "--verify", "--quiet", "HEAD~1"]);
   if (parent.code === 0 && parent.stdout.trim()) {
     const d = await git(["diff", "HEAD~1"]);
-    if (d.stdout.trim()) return { text: d.stdout, label: "last commit (HEAD~1..working tree)" };
+    if (d.stdout.trim())
+      return { text: d.stdout, label: "last commit (HEAD~1..working tree)", fallback: true };
   }
   return null;
 }
@@ -469,6 +602,24 @@ export default function reviewExtension(pi: ExtensionAPI) {
     }
   };
 
+  // Worktree paths for --cwd completion (sync).
+  const gitWorktreePaths = (): string[] => {
+    try {
+      const res = spawnSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: sessionCwd,
+        encoding: "utf-8",
+      });
+      if (res.status !== 0 || !res.stdout) return [];
+      return res.stdout
+        .split("\n")
+        .filter((l) => l.startsWith("worktree "))
+        .map((l) => l.slice("worktree ".length).trim())
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+
   // Read-only rendering for the review when feedback is "off".
   pi.registerMessageRenderer(CUSTOM_TYPE, (message, { outputPad }, theme) => {
     const box = new Box(outputPad, 1, (t) => theme.bg("customMessageBg", t));
@@ -496,9 +647,20 @@ export default function reviewExtension(pi: ExtensionAPI) {
         return refs.length > 0 ? refs : null;
       }
 
+      if (prev === "--cwd" || prev === "-C") {
+        const paths = gitWorktreePaths()
+          .filter((p) => p.toLowerCase().includes(lc) || shortPath(p).toLowerCase().includes(lc))
+          .slice(0, 50)
+          .map((p) => ({ value: withHead(p), label: shortPath(p) }));
+        return paths.length > 0 ? paths : null;
+      }
+
       const items: { value: string; label: string }[] = [];
       if (last.length > 0 && "--base".startsWith(lc)) {
         items.push({ value: withHead("--base "), label: "--base <ref>" });
+      }
+      if (last.length > 0 && "--cwd".startsWith(lc)) {
+        items.push({ value: withHead("--cwd "), label: "--cwd <path>" });
       }
       for (const m of availableModels) {
         if (m.toLowerCase().includes(lc)) items.push({ value: withHead(m), label: m });
@@ -507,20 +669,46 @@ export default function reviewExtension(pi: ExtensionAPI) {
     },
     handler: async (args, ctx) => {
       if (!ctx.isIdle()) {
-        ctx.ui.notify("Agent is busy — wait for it to finish, then run /review.", "warning");
+        ctx.ui.notify("Agent is busy \u2014 wait for it to finish, then run /review.", "warning");
         return;
       }
       refreshContext(ctx);
-      const { model, base } = parseArgs(args);
+      const { model, base, cwd: cwdArg } = parseArgs(args);
       const cfg = loadConfig(model);
-      const cwd = ctx.cwd;
-      const git: GitRunner = (a) => pi.exec("git", a, { cwd, signal: ctx.signal });
-      const sh: ShellRunner = (c) => pi.exec("bash", ["-c", c], { cwd, signal: ctx.signal });
+      const originCwd = ctx.cwd;
+      const gitFactory: GitFactory = (dir) => (a) =>
+        pi.exec("git", a, { cwd: dir, signal: ctx.signal });
 
-      ctx.ui.setStatus("review", "resolving review target…");
+      // Decide which directory to review: explicit --cwd, else auto-detect the
+      // worktree that actually has the work (the session may sit elsewhere).
+      let reviewCwd = originCwd;
+      let switched = false;
+      if (cwdArg) {
+        reviewCwd = resolvePath(cwdArg, originCwd);
+        switched = realpathOrSelf(reviewCwd) !== realpathOrSelf(originCwd);
+      } else {
+        ctx.ui.setStatus("review", "locating worktree with changes\u2026");
+        try {
+          const chosen = await pickWorktree(gitFactory, originCwd, ctx.ui, ctx.hasUI);
+          if (chosen.cancelled) {
+            ctx.ui.setStatus("review", "");
+            ctx.ui.notify("Review cancelled.", "info");
+            return;
+          }
+          reviewCwd = chosen.cwd;
+          switched = chosen.switched;
+        } catch {
+          /* not a git repo or detection failed; fall back to the session cwd */
+        }
+      }
+
+      const git: GitRunner = gitFactory(reviewCwd);
+      const sh: ShellRunner = (c) => pi.exec("bash", ["-c", c], { cwd: reviewCwd, signal: ctx.signal });
+
+      ctx.ui.setStatus("review", "resolving review target\u2026");
       let target: DiffTarget | null;
       try {
-        target = await resolveTarget(git, sh, cwd, cfg, base);
+        target = await resolveTarget(git, sh, reviewCwd, cfg, base);
       } catch (err) {
         ctx.ui.setStatus("review", "");
         ctx.ui.notify(`Could not build a diff: ${(err as Error).message}`, "error");
@@ -529,18 +717,33 @@ export default function reviewExtension(pi: ExtensionAPI) {
       if (!target) {
         ctx.ui.setStatus("review", "");
         ctx.ui.notify(
-          "Nothing to review — no uncommitted changes, new files, or unpushed commits found.",
+          `Nothing to review in ${shortPath(reviewCwd)} \u2014 no uncommitted changes, new files, or unpushed commits found.`,
           "info",
         );
         return;
       }
 
-      const stdinText = `# Review scope: ${target.label}\n\n${target.text}`;
-      ctx.ui.setStatus("review", `reviewing ${target.label} with ${cfg.model}…`);
+      // Pre-flight confirm when we switched directories or fell back to committed
+      // history — the two cases where a wrong target could slip through silently.
+      if ((switched || target.fallback) && ctx.hasUI) {
+        ctx.ui.setStatus("review", "");
+        const ok = await ctx.ui.confirm(
+          "Adversarial review",
+          `Review ${target.label}\nin ${shortPath(reviewCwd)}?`,
+        );
+        if (!ok) {
+          ctx.ui.notify("Review cancelled.", "info");
+          return;
+        }
+      }
+
+      const scope = `${target.label} \u00b7 ${shortPath(reviewCwd)}`;
+      const stdinText = `# Review scope: ${target.label} (in ${reviewCwd})\n\n${target.text}`;
+      ctx.ui.setStatus("review", `reviewing ${target.label} with ${cfg.model}\u2026`);
       let result: { output: string; exitCode: number; stderr: string };
       try {
-        result = await runReviewer(cfg, stdinText, cwd, ctx.signal, (turns) => {
-          ctx.ui.setStatus("review", `reviewing with ${cfg.model}… (turn ${turns})`);
+        result = await runReviewer(cfg, stdinText, reviewCwd, ctx.signal, (turns) => {
+          ctx.ui.setStatus("review", `reviewing with ${cfg.model}\u2026 (turn ${turns})`);
         });
       } catch (err) {
         ctx.ui.setStatus("review", "");
@@ -559,7 +762,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
         return;
       }
 
-      const header = `## 🔎 Adversarial review — ${cfg.model}\n_Scope: ${target.label}_`;
+      const header = `## \uD83D\uDD0E Adversarial review \u2014 ${cfg.model}\n_Scope: ${scope}_`;
       if (cfg.feedback === "off") {
         pi.sendMessage(
           { customType: CUSTOM_TYPE, content: `${header}\n\n${result.output}`, display: true },

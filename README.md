@@ -5,6 +5,7 @@
 | Extension | Description |
 |-----------|-------------|
 | **[github-prs](#github-prs)** | Shows your open GitHub PRs with reviewer approval status via `/prs`. ([source](extensions/github-prs.ts)) |
+| **[review](#review)** | Spawns a fresh, isolated `pi` process to adversarially review your recent work (uncommitted, new files, or unpushed commits; finds the right worktree) via `/review [model] [--base <ref>] [--cwd <path>]`. ([source](extensions/review.ts)) |
 | **[macos-notify](#macos-notify)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app), and flags the tab with an attention cue that clears when you return. ([source](extensions/macos-notify.ts)) |
 | **[save](#save)** | Saves the last assistant message as markdown to a file via `/save [filepath]`. Auto-generates a filename from context if none is given. ([source](extensions/save.ts)) |
 | **[security-guard](#security-guard)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. ([source](extensions/security-guard.ts)) |
@@ -57,6 +58,19 @@ Or just the GitHub PRs extension:
 }
 ```
 
+Or just the review extension:
+
+```json
+{
+  "packages": [
+    {
+      "source": "git:github.com/joeygibson/pi-extensions",
+      "extensions": ["extensions/review.ts"]
+    }
+  ]
+}
+```
+
 Or just the save extension:
 
 ```json
@@ -71,6 +85,95 @@ Or just the save extension:
 ```
 
 ## Extension Details
+
+### review
+
+Registers a `/review [model]` command that spawns a **fresh, isolated `pi`
+process** to adversarially review your uncommitted work. Because the reviewer
+runs in its own context (`--no-session`) with read-only tools, it critiques the
+current diff — bugs, security holes, missed edge cases, untested paths, and
+anything that contradicts the apparent intent — without the main session's
+momentum or self-confirmation bias.
+
+- **`/review`** — review your recent work with the configured (or default)
+  model (see **Review target** below).
+- **`/review gpt-6.1-sol`** — override the reviewer model for this run (tab
+  completion lists available models).
+- **`/review --base main`** — review everything since the merge-base with
+  `main` (committed + uncommitted + new files). Tab completion after `--base`
+  lists branches/tags.
+- **`/review gpt-6.1-sol --base HEAD~3`** — both at once.
+- **`/review --cwd ~/.git-worktrees/XDR-1234-foo`** — review a specific
+  directory/worktree instead of auto-detecting (tab completion after `--cwd`
+  lists the repo's worktrees).
+
+**Which directory gets reviewed.** The command works in git worktrees, which
+matters when a pi session lives in your main clone but did its work on a branch
+in a separate worktree. Unless you pass `--cwd`, `/review` figures out where to
+look, in order:
+
+- **Infer from this session's transcript** — the worktree whose files the
+  session edited/wrote (or `cd`'d / `git worktree add`'d / `git -C`'d into) most
+  recently. No prompt; this is the common case.
+- Otherwise **scan the repo's worktrees** for one with work (uncommitted changes
+  **or** commits ahead of base): the current dir if it has work, else a single
+  other candidate auto-selected, else a picker.
+- `--cwd <path>` skips all detection.
+
+Whenever the reviewed directory isn't your current one — or the target falls
+back to committed history — `/review` confirms (`Review <scope> in <path>?`)
+**before** spending a model call, so it can't silently review the wrong thing.
+
+**Model precedence** (highest first): the `/review <model>` argument, then
+`model` in `~/.pi/agent/review.toml`, then the built-in default
+(`gpt-6.1-sol`).
+
+**Review target** — what gets diffed, resolved in this order:
+
+1. **`--base <ref>`** — everything since the merge-base with `<ref>`
+   (committed + uncommitted), plus new files.
+2. **`diff_command`** (if set in config) — run verbatim; its stdout is the
+   review.
+3. **Uncommitted work** — `git diff HEAD` **plus untracked/new files**, so a
+   brand-new module you haven't added yet still gets reviewed.
+4. **Unpushed commits** — fallback when the working tree is clean: vs
+   `@{upstream}`, else `origin/main`/`origin/master` (or local `main`/
+   `master`), else `HEAD~1`. This is why **"commit everything, then run
+   `/review`" still works** — it reviews the commits instead of an empty diff.
+
+If none of those produce a diff, `/review` reports there's nothing to do.
+
+**Configuration:** optional `~/.pi/agent/review.toml` (all keys optional):
+
+```toml
+model              = "gpt-6.1-sol"   # reviewer model
+thinking           = "high"          # reviewer thinking level
+extra_instructions = ""              # appended to the reviewer prompt
+feedback           = "discuss"       # discuss | auto | off
+include_untracked  = true            # include new/untracked files (default)
+diff_command       = ""              # advanced: full override of the target
+```
+
+The `feedback` key controls what happens once the critique is ready:
+
+- **`discuss`** (default) — the critique is injected as a user message that
+  tells your current agent to walk you through the findings **without editing
+  anything**, then wait for your go-ahead before changing code. Nothing is
+  touched until you approve.
+- **`auto`** — the critique is injected and the agent fixes the findings
+  immediately. Opt in only if you want a hands-off loop.
+- **`off`** — the critique is displayed read-only and no turn is triggered;
+  you read it yourself and decide what to do.
+
+Setting `include_untracked = false` skips new/untracked files. Setting
+`diff_command` to a non-empty command overrides the whole target-resolution
+logic above (you own the diff). The diff is streamed to the reviewer on stdin
+(so large diffs don't hit argv limits), new files are size-capped so a huge or
+binary file can't blow the context window, and progress shows in the footer.
+
+**Prerequisites:**
+- `git` on your `PATH`
+- Credentials for the reviewer model's provider
 
 ### github-prs
 

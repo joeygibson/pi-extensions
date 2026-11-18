@@ -5,7 +5,7 @@
 | Extension | Description |
 |-----------|-------------|
 | **[github-prs](#github-prs)** | Shows your open GitHub PRs with reviewer approval status via `/prs`. ([source](extensions/github-prs.ts)) |
-| **[review](#review)** | Spawns a fresh, isolated `pi` process to adversarially review your recent work (uncommitted, new files, or unpushed commits; finds the right worktree) via `/review [model] [--base <ref>] [--cwd <path>]`. ([source](extensions/review.ts)) |
+| **[review](#review)** | Spawns a fresh, isolated `pi` process to adversarially review your recent work (uncommitted changes, new files, or local-only commits; finds the right worktree) via `/review [model] [--base <ref>] [--cwd <path>]`. ([source](extensions/review.ts)) |
 | **[macos-notify](#macos-notify)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app), and flags the tab with an attention cue that clears when you return. ([source](extensions/macos-notify.ts)) |
 | **[save](#save)** | Saves the last assistant message as markdown to a file via `/save [filepath]`. Auto-generates a filename from context if none is given. ([source](extensions/save.ts)) |
 | **[security-guard](#security-guard)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. ([source](extensions/security-guard.ts)) |
@@ -136,10 +136,13 @@ back to committed history — `/review` confirms (`Review <scope> in <path>?`)
    review.
 3. **Uncommitted work** — `git diff HEAD` **plus untracked/new files**, so a
    brand-new module you haven't added yet still gets reviewed.
-4. **Unpushed commits** — fallback when the working tree is clean: vs
-   `@{upstream}`, else `origin/main`/`origin/master` (or local `main`/
-   `master`), else `HEAD~1`. This is why **"commit everything, then run
-   `/review`" still works** — it reviews the commits instead of an empty diff.
+4. **Local-only commits** — fallback when the working tree is clean: the
+   commits on `HEAD` that aren't reachable from any remote-tracking branch
+   (i.e. not yet pushed anywhere). Already-pushed commits are **never** reviewed
+   — reviewing a commit that's already on the remote is pointless. This still
+   covers **"commit, then run `/review`"** as long as you haven't pushed. (In a
+   repo with no remote-tracking refs at all, this step is skipped — there's no
+   "pushed" baseline to compare against.)
 
 If none of those produce a diff, `/review` reports there's nothing to do.
 

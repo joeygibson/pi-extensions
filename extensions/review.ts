@@ -27,9 +27,11 @@
  *                             (committed + uncommitted), plus new files.
  *   2. `diff_command` set  — run it verbatim; its stdout is the review.
  *   3. uncommitted work    — `git diff HEAD` plus untracked files, if any.
- *   4. unpushed commits    — fallback when the tree is clean: vs @{upstream},
- *                             else origin/main|master, else HEAD~1. This is why
- *                             "commit everything, then /review" still works.
+ *   4. local-only commits — fallback when the tree is clean: the commits on
+ *                             HEAD not reachable from any remote-tracking
+ *                             branch. Already-pushed commits are never reviewed
+ *                             (pointless); this still covers "commit, then
+ *                             /review" as long as you haven't pushed yet.
  * If none of these produce a diff, /review reports that there is nothing to do.
  *
  * Configuration: ~/.pi/agent/review.toml (all keys optional)
@@ -63,6 +65,10 @@ const CUSTOM_TYPE = "adversarial-review";
 // Caps so a huge or binary new file can't blow the reviewer's context window.
 const MAX_UNTRACKED_FILE_BYTES = 256 * 1024;
 const MAX_UNTRACKED_TOTAL_BYTES = 512 * 1024;
+
+// git's canonical empty-tree object, used as the base when the oldest local-only
+// commit is the root commit (it has no parent to diff against).
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 const SYSTEM_PROMPT = `You are a hostile, senior adversarial code reviewer. A different agent just
 produced the changes shown in the user's diff. Your job is to find what is WRONG with them.
@@ -279,29 +285,28 @@ async function listWorktrees(gitRepo: GitRunner): Promise<Worktree[]> {
   return out;
 }
 
-/** Does this worktree have commits beyond its upstream/default base? */
-async function aheadOfBase(git: GitRunner): Promise<boolean> {
-  const upstream = await git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]);
-  let base = upstream.code === 0 && upstream.stdout.trim() ? upstream.stdout.trim() : "";
-  if (!base) {
-    for (const cand of ["origin/main", "origin/master", "main", "master"]) {
-      const v = await git(["rev-parse", "--verify", "--quiet", `${cand}^{commit}`]);
-      if (v.code === 0 && v.stdout.trim()) {
-        base = cand;
-        break;
-      }
-    }
-  }
-  if (!base) return false;
-  const cnt = await git(["rev-list", "--count", `${base}..HEAD`]);
-  return cnt.code === 0 && Number.parseInt(cnt.stdout.trim() || "0", 10) > 0;
+/**
+ * Commits reachable from HEAD but not from any remote-tracking branch, oldest
+ * first — i.e. local-only work that has not been pushed anywhere. Returns []
+ * when the repo has no remote-tracking refs at all (nothing is "pushed" to
+ * compare against, so we do not treat the whole history as reviewable).
+ */
+async function localOnlyCommits(git: GitRunner): Promise<string[]> {
+  const remotes = await git(["for-each-ref", "--count=1", "--format=%(refname)", "refs/remotes"]);
+  if (remotes.code !== 0 || !remotes.stdout.trim()) return [];
+  const r = await git(["rev-list", "--reverse", "HEAD", "--not", "--remotes"]);
+  if (r.code !== 0) return [];
+  return r.stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
-/** A worktree is a review candidate if it has uncommitted changes or commits ahead. */
+/** A worktree is a review candidate if it has uncommitted changes or local-only commits. */
 async function worktreeHasWork(git: GitRunner): Promise<boolean> {
   const status = await git(["status", "--porcelain"]);
   if (status.code === 0 && status.stdout.trim()) return true;
-  return aheadOfBase(git);
+  return (await localOnlyCommits(git)).length > 0;
 }
 
 interface ChosenDir {
@@ -507,31 +512,23 @@ async function resolveTarget(
     return { text, label: `uncommitted changes (${parts.join(", ")})`, fallback: false };
   }
 
-  // 4. fallback: unpushed / unmerged commits (handles "commit, then /review")
-  const upstream = await git([
-    "rev-parse",
-    "--abbrev-ref",
-    "--symbolic-full-name",
-    "@{upstream}",
-  ]);
-  if (upstream.code === 0 && upstream.stdout.trim()) {
-    const ref = upstream.stdout.trim();
-    const d = await git(["diff", `${ref}...HEAD`]);
-    if (d.stdout.trim()) return { text: d.stdout, label: `unpushed commits vs ${ref}`, fallback: true };
-  }
-  for (const cand of ["origin/main", "origin/master", "main", "master"]) {
-    const v = await git(["rev-parse", "--verify", "--quiet", `${cand}^{commit}`]);
-    if (v.code === 0 && v.stdout.trim()) {
-      const d = await git(["diff", `${cand}...HEAD`]);
-      if (d.stdout.trim()) return { text: d.stdout, label: `commits vs ${cand}`, fallback: true };
-      break; // found a base but HEAD is not ahead of it
+  // 4. fallback: local-only commits (not reachable from any remote). Committed
+  //    work that is already pushed is intentionally NOT reviewed — reviewing a
+  //    commit that already exists on the remote is pointless.
+  const localCommits = await localOnlyCommits(git);
+  if (localCommits.length > 0) {
+    const oldest = localCommits[0];
+    const parent = await git(["rev-parse", "--verify", "--quiet", `${oldest}^`]);
+    const from = parent.code === 0 && parent.stdout.trim() ? parent.stdout.trim() : EMPTY_TREE;
+    const d = await git(["diff", from, "HEAD"]);
+    if (d.stdout.trim()) {
+      const n = localCommits.length;
+      return {
+        text: d.stdout,
+        label: `${n} local-only commit${n === 1 ? "" : "s"} (not on any remote)`,
+        fallback: true,
+      };
     }
-  }
-  const parent = await git(["rev-parse", "--verify", "--quiet", "HEAD~1"]);
-  if (parent.code === 0 && parent.stdout.trim()) {
-    const d = await git(["diff", "HEAD~1"]);
-    if (d.stdout.trim())
-      return { text: d.stdout, label: "last commit (HEAD~1..working tree)", fallback: true };
   }
   return null;
 }

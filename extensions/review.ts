@@ -2,7 +2,7 @@
  * Review Extension
  *
  * Registers a `/review [model] [--base <ref>] [--cwd <path>]` command that
- * spawns a fresh, isolated `pi` process to adversarially review your recent
+ * spawns a fresh, isolated `pi` process to critically review your recent
  * work. The reviewer runs in its own context (`--no-session`), with read-only
  * tools, and critiques the diff: bugs, security holes, missed edge cases,
  * untested paths, and anything that contradicts the stated intent.
@@ -70,10 +70,11 @@ const MAX_UNTRACKED_TOTAL_BYTES = 512 * 1024;
 // commit is the root commit (it has no parent to diff against).
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-const SYSTEM_PROMPT = `You are a hostile, senior adversarial code reviewer. A different agent just
-produced the changes shown in the user's diff. Your job is to find what is WRONG with them.
-Assume the change is broken, unsafe, or incomplete until the code proves otherwise. Do NOT be
-agreeable, do NOT praise, and do NOT pad the review with a summary of what the change does.
+const SYSTEM_PROMPT = `You are a skeptical, senior code reviewer. A different agent produced the
+changes shown in the user's diff, and you are the independent second pair of eyes. Be rigorous
+and critical: your value is catching problems the author missed, not reassuring them. But stay
+calibrated \u2014 do not inflate severity, do not invent issues to seem thorough, and do not pad
+the review with a restatement of what the change does.
 
 You have read-only tools. Use bash ONLY for read-only inspection (\`git diff\`, \`git log\`,
 \`git show\`, \`cat\`, \`rg\`). NEVER modify files, stage, commit, or run builds/tests that mutate
@@ -82,29 +83,30 @@ read-only.
 
 Strategy:
 1. Read the provided diff carefully.
-2. Open the surrounding files to understand context the diff does not show.
-3. Hunt for: real bugs, logic errors, race conditions, unhandled errors, resource leaks,
+2. Open the surrounding files to understand context the diff does not show before judging intent.
+3. Look hard for: real bugs, logic errors, race conditions, unhandled errors, resource leaks,
    security issues (injection, authz, secrets, unsafe deserialization), broken edge cases,
    off-by-ones, incorrect types/enums, behavior that contradicts the apparent intent, missing
    or wrong tests, and anything that will break existing callers.
 
-Output format (omit a section if it is genuinely empty — do not invent issues to fill it):
+Output format (omit a section if it is genuinely empty \u2014 do not invent issues to fill it):
 
 ## Critical (must fix)
-- \`path:line\` — concrete problem and why it bites, with the failing scenario.
+- \`path:line\` \u2014 concrete problem and why it bites, with the failing scenario.
 
 ## Warnings (should fix)
-- \`path:line\` — problem and why it matters.
+- \`path:line\` \u2014 problem and why it matters.
 
 ## Suggestions (consider)
-- \`path:line\` — improvement.
+- \`path:line\` \u2014 improvement.
 
 ## Verdict
-One or two blunt sentences: is this change safe to ship as-is? If not, what is the single
-biggest blocker?
+One or two blunt sentences: is this change safe to ship as-is, and if not, what is the single
+biggest blocker? If the change genuinely looks sound, say so plainly rather than manufacturing
+concerns.
 
-Be specific. Always cite file and line. Prefer one well-explained real defect over ten vague
-nitpicks.`;
+Calibrate severity honestly: reserve Critical for things that actually break or are unsafe.
+Always cite file and line. Prefer one well-explained real defect over ten vague nitpicks.`;
 
 type FeedbackMode = "discuss" | "auto" | "off";
 
@@ -582,7 +584,7 @@ async function runReviewer(
   if (cfg.thinking) args.push("--thinking", cfg.thinking);
   args.push(
     "The content on stdin is the work to review: a `# Review scope:` line" +
-      " followed by the diff. Adversarially review it now.",
+      " followed by the diff. Review it critically now.",
   );
 
   const invocation = getPiInvocation(args);
@@ -724,7 +726,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("review", {
-    description: "Adversarially review recent work in a fresh pi process",
+    description: "Critically review recent work in a fresh pi process",
     // The whole argument string is passed here and the chosen value replaces it
     // wholesale, so each completion value is the full "<model> --base <ref>".
     getArgumentCompletions: (argPrefix) => {
@@ -830,7 +832,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
       if ((switched || target.fallback) && ctx.hasUI) {
         ctx.ui.setStatus("review", "");
         const ok = await ctx.ui.confirm(
-          "Adversarial review",
+          "Critical review",
           `Review ${target.label}\nin ${shortPath(reviewCwd)}?`,
         );
         if (!ok) {
@@ -864,7 +866,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
         return;
       }
 
-      const header = `## \uD83D\uDD0E Adversarial review \u2014 ${cfg.model}\n_Scope: ${scope}_`;
+      const header = `## \uD83D\uDD0E Critical review \u2014 ${cfg.model}\n_Scope: ${scope}_`;
       if (cfg.feedback === "off") {
         pi.sendMessage(
           { customType: CUSTOM_TYPE, content: `${header}\n\n${result.output}`, display: true },

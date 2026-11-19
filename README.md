@@ -5,7 +5,7 @@
 | Extension | Description |
 |-----------|-------------|
 | **[github-prs](#github-prs)** | Shows your open GitHub PRs with reviewer approval status via `/prs`. ([source](extensions/github-prs.ts)) |
-| **[review](#review)** | Spawns a fresh, isolated `pi` process to adversarially review your recent work (uncommitted changes, new files, or local-only commits; finds the right worktree) via `/review [model] [--base <ref>] [--cwd <path>]`. ([source](extensions/review.ts)) |
+| **[review](#review)** | Spawns a fresh, isolated `pi` process to critically review your recent work (uncommitted changes, new files, or local-only commits; finds the right worktree) via `/review [model] [--base <ref>] [--cwd <path>]`. ([source](extensions/review.ts)) |
 | **[macos-notify](#macos-notify)** | Sends a native macOS notification when the agent finishes working. Shows elapsed time and tab info (Ghostty, iTerm2, Terminal.app), and flags the tab with an attention cue that clears when you return. ([source](extensions/macos-notify.ts)) |
 | **[save](#save)** | Saves the last assistant message as markdown to a file via `/save [filepath]`. Auto-generates a filename from context if none is given. ([source](extensions/save.ts)) |
 | **[security-guard](#security-guard)** | Blocks or prompts on dangerous bash commands, sensitive file writes, and sensitive file reads. Configurable via a TOML file. ([source](extensions/security-guard.ts)) |
@@ -89,7 +89,7 @@ Or just the save extension:
 ### review
 
 Registers a `/review [model]` command that spawns a **fresh, isolated `pi`
-process** to adversarially review your uncommitted work. Because the reviewer
+process** to critically review your recent work. Because the reviewer
 runs in its own context (`--no-session`) with read-only tools, it critiques the
 current diff — bugs, security holes, missed edge cases, untested paths, and
 anything that contradicts the apparent intent — without the main session's
